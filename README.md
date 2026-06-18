@@ -4,7 +4,9 @@ An elegant Windows desktop monitor for your **Claude usage** — live **5-hour**
 limits shown as animated, gradient **Fluent 2** gauges. Built with **WinUI 3** on a
 **provider-agnostic C# metrics engine** that runs in-process.
 
-![Fluentometer dashboard showing live Claude 5-hour and weekly usage gauges](assets/demo.gif)
+<p align="center">
+  <img src="assets/demo.gif" alt="Fluentometer dashboard showing live Claude 5-hour and weekly usage gauges" width="266">
+</p>
 
 > Status: **v1** — Claude monitoring only (the architecture is built to add other services
 > later). Ships **unsigned** (first-run SmartScreen prompt → "More info" → "Run anyway").
