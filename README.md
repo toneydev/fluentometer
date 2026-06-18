@@ -7,6 +7,10 @@ limits shown as animated, gradient **Fluent 2** gauges. Built with **WinUI 3** o
 > Status: **v1** — Claude monitoring only (the architecture is built to add other services
 > later). Ships **unsigned** (first-run SmartScreen prompt → "More info" → "Run anyway").
 
+## Download
+
+**[⬇ Download the latest release](https://github.com/toneydev/fluentometer/releases/latest)** — unzip and run `Fluentometer.exe`. No install, no .NET required.
+
 ## Features
 
 - Live **5-hour**, **weekly**, and **per-model weekly** usage gauges with smooth Composition motion.
