@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- UseWinUI and Microsoft.WindowsAppSDK are intentionally omitted from the scaffold.
+         This is a plain class library; the WindowsAppSDK package's buildTransitive targets
+         require Visual Studio AppxPackage MSBuild tasks (Microsoft.Build.Packaging.Pri.Tasks.dll)
+         which are NOT available in a headless dotnet CLI / CI build without VS installed.
+         Add Microsoft.WindowsAppSDK back here in Task 4 (UsageViewModel) when WinUI types
+         such as DispatcherQueue are needed, and only if headless build remains possible.
+         If not, use a conditional (e.g. DisableMsixProjectCapabilityAddedByProject) to suppress
+         the PRI generation targets for library projects. -->
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.*" />
+  </ItemGroup>
+</Project>

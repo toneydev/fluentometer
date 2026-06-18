@@ -1,0 +1,144 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>Fluentometer</RootNamespace>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <!--
+      EnableMsixTooling=true + EnablePriGenTooling=false routes PRI generation through the
+      NuGet-based Msix pipeline (Microsoft.Build.Msix.Pri.targets → Microsoft.Build.Msix.dll,
+      which ships inside the Microsoft.WindowsAppSDK NuGet package at tools\net6.0\).
+      NO VS workload is required.
+
+      Why both flags:
+      - EnablePriGenTooling=false: tells WinUI.targets to import Microsoft.Build.Msix.targets
+        instead of the MrtCore pipeline (which needs the VS-only
+        Microsoft.Build.Packaging.Pri.Tasks.dll and fails with MSB4062 headless).
+      - EnableMsixTooling=true: sets MsixPackageSupport=true so Microsoft.Build.Msix.targets
+        actually imports its sub-targets including Microsoft.Build.Msix.Pri.targets.
+        Without this, MsixPackageSupport=false and no PRI is generated even if Msix.targets
+        is imported.
+
+      Directory.Build.props keeps EnableCoreMrtTooling=false to block MrtCore.PriGen.targets
+      from being imported by Foundation.targets (which runs before WinUI.targets and would
+      fail immediately on the missing VS dll).
+
+      resources.pri is REQUIRED at runtime by Microsoft.UI.Xaml.dll — WinUI cannot activate
+      without it.  An absent resources.pri causes 0xC000027B STOWED_EXCEPTION (combase E_FAIL)
+      on launch, even when the app has no .resw localised strings.
+    -->
+    <EnablePriGenTooling>false</EnablePriGenTooling>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <!-- RuntimeIdentifier required for WindowsAppSDKSelfContained=true: without it,
+         MSBuild cannot determine NativePlatform and fails with MSB4062 errors. -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Embeds app.ico into the exe so Windows Explorer, taskbar, alt-tab, and the
+         title bar all display the branded icon rather than the default blank Windows
+         icon.  The runtime SetIcon call (MainWindow.xaml.cs) is ALSO required for
+         unpackaged WinUI 3 — the embedded resource alone is not surfaced to AppWindow
+         at runtime; both steps are needed. -->
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <!-- Strip satellite-language MUI/locale folders from publish output — the app
+         ships English-only (UI strings are in XAML, not .resw localised resources).
+         This tells the WinAppSDK / .NET runtime NOT to copy the 70+ xx-YY locale
+         subfolders into the publish dir, saving ~100 MB uncompressed.
+         IMPORTANT: this strips SATELLITE resources only; resources.pri is generated
+         by the NuGet-based Msix pipeline (EnableMsixTooling=true) and is NOT a
+         satellite resource — it survives this setting.  The CheckResourcesPriExists
+         build guard below enforces that invariant. -->
+    <SatelliteResourceLanguages>en-US</SatelliteResourceLanguages>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.7.*" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.*" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.*" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.*" />
+    <PackageReference Include="H.NotifyIcon.WinUI" Version="2.*" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Fluentometer.Logic\Fluentometer.Logic.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Branded tray icon: copied next to Fluentometer.exe so it can be loaded
+         at runtime via AppContext.BaseDirectory (unpackaged-safe; no ms-appx). -->
+    <Content Include="Assets\tray.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- Window/taskbar icon: copied to output so AppWindow.SetIcon can resolve it
+         via AppContext.BaseDirectory at runtime (unpackaged-safe; no ms-appx).
+         <ApplicationIcon> above embeds it in the exe; this entry ensures the file
+         is also present at runtime for the SetIcon call. -->
+    <Content Include="Assets\app.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <!--
+    Regression guard: fail the build immediately if resources.pri was not generated.
+    An absent resources.pri causes a silent 0xC000027B STOWED_EXCEPTION crash on launch
+    (combase RO_E_CLOSED) because Microsoft.UI.Xaml.dll cannot resolve its resource map.
+    This guard catches the failure at build time rather than at runtime.
+  -->
+  <Target Name="CheckResourcesPriExists" AfterTargets="Build">
+    <Error
+      Condition="!Exists('$(OutDir)resources.pri')"
+      Text="resources.pri was not generated in $(OutDir). WinUI 3 requires resources.pri at runtime — set EnablePriGenTooling=false and EnableMsixTooling=true so the NuGet-based Msix pipeline generates it. See Fluentometer.csproj for details." />
+  </Target>
+
+  <!--
+    Strip WinAppSDK locale MUI folders from publish output (unpackaged builds only).
+
+    Background: SatelliteResourceLanguages=en-US (above) handles .NET managed satellite
+    assemblies (.resources.dll) but does NOT affect the xx-YY/Microsoft.UI.Xaml.dll.mui
+    files that the WinAppSDK self-contained pipeline copies from the framework MSIX.
+    Those folders are the bulk of the locale bloat (~130 extra folders × 2 .mui files
+    each).  This is a known open issue in WindowsAppSDK (github #4288).
+
+    This target removes every locale subfolder except en-us from the PUBLISH dir only
+    ($(PublishDir)) — it does NOT touch the intermediate build output ($(OutDir)), so
+    local Debug runs are unaffected.  en-us is kept because WinUI's resource loader
+    always probes en-us as its neutral-language fallback.
+
+    resources.pri lives at the root of $(PublishDir), not inside any locale subfolder,
+    so it is never touched.  The CheckResourcesPriAfterLocaleStrip target below enforces
+    this invariant.
+
+    Unsupported by Microsoft but widely used in the community; thoroughly verified below.
+    See: https://github.com/microsoft/microsoft-ui-xaml/discussions/8389
+         https://github.com/microsoft/WindowsAppSDK/issues/4288
+  -->
+  <Target Name="StripWinAppSdkLocaleFoldersFromPublish"
+          Condition="'$(WindowsPackageType)' == 'None'"
+          AfterTargets="Publish">
+    <ItemGroup>
+      <!-- Collect all .mui files NOT in en-us -->
+      <_LocaleMuiToRemove Include="$(PublishDir)*\*.mui"
+                          Exclude="$(PublishDir)en-us\*.mui" />
+      <!-- Derive the parent directories (one per locale folder) -->
+      <_LocaleDirsToRemove Include="@(_LocaleMuiToRemove->'%(RootDir)%(Directory)')" />
+    </ItemGroup>
+    <RemoveDir Directories="@(_LocaleDirsToRemove)" />
+    <Message Importance="high" Text="StripWinAppSdkLocaleFoldersFromPublish: removed non-en-us locale folders from $(PublishDir)" />
+  </Target>
+
+  <!--
+    Post-strip guard: verify resources.pri survived locale stripping.
+    Runs after StripWinAppSdkLocaleFoldersFromPublish so a future regression
+    (e.g. WinAppSDK moving resources.pri into a locale subdir) fails the build
+    rather than producing a broken zip.
+  -->
+  <Target Name="CheckResourcesPriAfterLocaleStrip"
+          Condition="'$(WindowsPackageType)' == 'None'"
+          AfterTargets="StripWinAppSdkLocaleFoldersFromPublish">
+    <Error
+      Condition="!Exists('$(PublishDir)resources.pri')"
+      Text="resources.pri is missing from $(PublishDir) after locale folder stripping. Do NOT strip the root of PublishDir — only xx-YY subdirectories. See StripWinAppSdkLocaleFoldersFromPublish in Fluentometer.csproj." />
+  </Target>
+
+</Project>

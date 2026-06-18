@@ -1,0 +1,65 @@
+<Window
+    x:Class="Fluentometer.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Fluentometer">
+
+    <!--
+        MainWindow hosts:
+          - Mica backdrop (set in code-behind via SystemBackdrop = new MicaBackdrop()).
+          - A custom title bar drag region (ExtendsContentIntoTitleBar=true in code-behind).
+          - A Frame that navigates to DashboardPage on launch.
+    -->
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <!-- Custom title bar drag row -->
+            <RowDefinition Height="48" />
+            <!-- Content area -->
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Title bar: app icon + name, draggable via SetTitleBar(TitleBarGrid).
+             Left padding (20) matches the dashboard ScrollViewer's left padding so
+             the icon's left edge lines up with the gauge bars below — the standard
+             Windows 11 pattern (icon flush-left with page content). The min/max/close
+             caption buttons are reserved by the system on the RIGHT (LTR), so no
+             left column reserve is needed. -->
+        <Grid
+            x:Name="TitleBarGrid"
+            Grid.Row="0"
+            Background="Transparent"
+            Padding="20,0,0,0"
+            ColumnSpacing="10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />  <!-- App icon -->
+                <ColumnDefinition Width="*"    />  <!-- App name -->
+            </Grid.ColumnDefinitions>
+
+            <!-- Thin app icon (Segoe Fluent Icons "Speed" speedometer glyph) -->
+            <FontIcon
+                Grid.Column="0"
+                Glyph="&#xEC4A;"
+                FontFamily="Segoe Fluent Icons"
+                FontSize="16"
+                Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                VerticalAlignment="Center"
+                AutomationProperties.Name="Fluentometer application icon" />
+
+            <TextBlock
+                Grid.Column="1"
+                Text="Fluentometer"
+                Style="{StaticResource CaptionTextBlockStyle}"
+                FontWeight="SemiBold"
+                VerticalAlignment="Center"
+                Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+        </Grid>
+
+        <!-- Main content frame -->
+        <Frame
+            x:Name="RootFrame"
+            Grid.Row="1"
+            Background="Transparent" />
+
+    </Grid>
+</Window>

@@ -1,0 +1,262 @@
+<Page
+    x:Class="Fluentometer.Views.DashboardPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Fluentometer.Controls"
+    xmlns:viewmodels="using:Fluentometer.Logic.ViewModels"
+    Background="Transparent">
+
+    <!--
+        DashboardPage — neutral gauge panels bound to UsageViewModel.
+
+        Layout: two-column on wide windows (>= 900 px), single column on narrow,
+        driven by AdaptiveTrigger changing the ItemsRepeater's UniformGridLayout
+        MaximumRowsOrColumns. Cards use a neutral system brush (follows Windows
+        light/dark); the theme's rich gradient is painted on each gauge bar,
+        rebuilt on ThemeService.ThemeChanged via ApplyTheme().
+        A 1-second DispatcherTimer drives the reset countdown labels.
+    -->
+
+    <Grid>
+        <VisualStateManager.VisualStateGroups>
+            <VisualStateGroup x:Name="WindowSizeStates">
+                <VisualState x:Name="WideState">
+                    <VisualState.StateTriggers>
+                        <AdaptiveTrigger MinWindowWidth="900" />
+                    </VisualState.StateTriggers>
+                    <VisualState.Setters>
+                        <Setter Target="GaugeLayout.MaximumRowsOrColumns" Value="2" />
+                    </VisualState.Setters>
+                </VisualState>
+                <VisualState x:Name="NarrowState">
+                    <VisualState.StateTriggers>
+                        <AdaptiveTrigger MinWindowWidth="0" />
+                    </VisualState.StateTriggers>
+                    <VisualState.Setters>
+                        <Setter Target="GaugeLayout.MaximumRowsOrColumns" Value="1" />
+                    </VisualState.Setters>
+                </VisualState>
+            </VisualStateGroup>
+        </VisualStateManager.VisualStateGroups>
+
+        <ScrollViewer
+            VerticalScrollBarVisibility="Auto"
+            HorizontalScrollBarVisibility="Disabled"
+            Padding="20,16,20,20">
+
+            <StackPanel Spacing="16">
+
+                <!-- ============================================================
+                     Header strip: connection dot + refresh / settings buttons,
+                     right-aligned and centered on one horizontal axis. The app
+                     name lives in the title bar, so it is intentionally not
+                     repeated here. Subscription type is also intentionally not
+                     shown: the credential's subscriptionType reflects the *next*
+                     billing cycle, not the currently-active plan, so it can
+                     contradict what the Claude console shows.
+                ============================================================ -->
+                <!--
+                    Top margin (6px) keeps the buttons off the ScrollViewer's content-top
+                    edge so the keyboard focus rectangle — drawn 3px outside the button
+                    bounds (FocusVisualMargin="-3") plus its line thickness — isn't clipped
+                    at the top. Both buttons get an identical explicit 32x32 box with
+                    Padding="0" so they are exactly the same size with matching focus
+                    outlines (the icons differ in glyph weight, so they keep their own
+                    FontSize, but the boxes are uniform). The dot stays vertically centred
+                    in the same row, so its centre aligns with the buttons' centres.
+                -->
+                <Grid ColumnSpacing="10" Margin="0,6,0,4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"    />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Connection indicator dot: green = connected, dim = disconnected -->
+                    <Ellipse
+                        Grid.Column="1"
+                        x:Name="ConnectionDot"
+                        Width="9"
+                        Height="9"
+                        VerticalAlignment="Center"
+                        AutomationProperties.Name="Connection status indicator" />
+
+                    <!-- Refresh button -->
+                    <Button
+                        Grid.Column="2"
+                        x:Name="RefreshButton"
+                        Width="32"
+                        Height="32"
+                        Padding="0"
+                        VerticalAlignment="Center"
+                        AutomationProperties.Name="Refresh usage data"
+                        AutomationProperties.HelpText="Requests a fresh snapshot of Claude usage data"
+                        ToolTipService.ToolTip="Refresh">
+                        <FontIcon
+                            Glyph="&#xE72C;"
+                            FontFamily="Segoe Fluent Icons"
+                            FontSize="13" />
+                    </Button>
+
+                    <!-- Settings navigation button -->
+                    <Button
+                        Grid.Column="3"
+                        x:Name="SettingsButton"
+                        Width="32"
+                        Height="32"
+                        Padding="0"
+                        VerticalAlignment="Center"
+                        AutomationProperties.Name="Open settings">
+                        <FontIcon
+                            Glyph="&#xE713;"
+                            FontFamily="Segoe Fluent Icons"
+                            FontSize="16" />
+                    </Button>
+                </Grid>
+
+                <!-- Demonstration-mode banner — obvious, only shown while demo is active -->
+                <Border
+                    x:Name="DemoModeBanner"
+                    Visibility="Collapsed"
+                    CornerRadius="8"
+                    Background="#FF6A2BD9"
+                    Padding="16,10"
+                    AutomationProperties.Name="Demonstration mode active">
+                    <StackPanel Spacing="2">
+                        <TextBlock
+                            Text="DEMONSTRATION MODE"
+                            Foreground="#FFFFFFFF"
+                            FontWeight="Bold"
+                            FontSize="14"
+                            CharacterSpacing="120" />
+                        <TextBlock
+                            Text="Showing simulated data — not your real usage."
+                            Foreground="#FFFFFFFF"
+                            Opacity="0.9"
+                            Style="{StaticResource CaptionTextBlockStyle}" />
+                    </StackPanel>
+                </Border>
+
+                <!-- Degraded health banner -->
+                <InfoBar
+                    x:Name="DegradedBanner"
+                    IsOpen="False"
+                    Severity="Warning"
+                    Title="Degraded — local estimate"
+                    Message="Live Claude usage data is unavailable. Values shown are locally calculated estimates."
+                    IsClosable="False"
+                    AutomationProperties.Name="Degraded mode warning" />
+
+                <!-- Needs-signin card -->
+                <InfoBar
+                    x:Name="NeedsSignInBanner"
+                    IsOpen="False"
+                    Severity="Informational"
+                    Title="Sign in to Claude Code"
+                    Message="Run 'claude login' in your terminal to see live usage data, then click Refresh."
+                    IsClosable="False"
+                    AutomationProperties.Name="Sign in required notice" />
+
+                <!-- ============================================================
+                     Gauge panels — one per GaugeViewModel in UsageViewModel.Gauges.
+                     ItemsRepeater with UniformGridLayout: 1 column (narrow) or
+                     2 columns (wide, driven by AdaptiveTrigger above).
+                ============================================================ -->
+                <ItemsRepeater
+                    x:Name="GaugeRepeater"
+                    AutomationProperties.Name="Usage gauge panels">
+                    <ItemsRepeater.Layout>
+                        <UniformGridLayout
+                            x:Name="GaugeLayout"
+                            MaximumRowsOrColumns="1"
+                            MinItemWidth="160"
+                            MinItemHeight="176"
+                            ItemsStretch="Fill"
+                            MinRowSpacing="16"
+                            MinColumnSpacing="16" />
+                    </ItemsRepeater.Layout>
+                    <ItemsRepeater.ItemTemplate>
+                        <DataTemplate x:DataType="viewmodels:GaugeViewModel">
+                            <!--
+                                Each gauge card IS the progress bar: a full-bleed GaugeControl
+                                wipe-reveals the theme gradient to the utilization % over a fixed
+                                dark track, with white text overlaid directly on the bar.
+                                Named text elements are reachable by DashboardPage.FindNamedChild
+                                (a recursive visual-tree search).
+                            -->
+                            <Border
+                                CornerRadius="12"
+                                Background="#FF1C1C1E"
+                                BorderBrush="#26FFFFFF"
+                                BorderThickness="1"
+                                MinHeight="120"
+                                AutomationProperties.Name="{x:Bind Label, Mode=OneWay}">
+                                <Grid>
+                                    <!-- Layer 0: the bar. Value/estimate ride the same
+                                         x:Bind channel as the label so they cannot desync
+                                         from it under ItemsRepeater recycling. The x:Name
+                                         remains so ApplyTheme can paint Fill/Glow brushes. -->
+                                    <controls:GaugeControl
+                                        x:Name="GaugeBar"
+                                        Value="{x:Bind BarValue, Mode=OneWay}"
+                                        IsEstimate="{x:Bind IsEstimate, Mode=OneWay}" />
+
+                                    <!-- Overlay text (white) sits directly on the bar; the fixed
+                                         dark track + saturated fill keep it legible without a scrim. -->
+                                    <Grid Padding="20,14">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="*"    />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"    />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <!-- Label -->
+                                        <TextBlock
+                                            Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2"
+                                            Text="{x:Bind Label, Mode=OneWay}"
+                                            Style="{StaticResource CaptionTextBlockStyle}"
+                                            Foreground="#FFF5F5F5"
+                                            Opacity="0.85"
+                                            TextTrimming="CharacterEllipsis" />
+
+                                        <!-- Hero % value -->
+                                        <TextBlock
+                                            Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2"
+                                            Text="{x:Bind ValueText, Mode=OneWay}"
+                                            Foreground="#FFF5F5F5"
+                                            FontSize="40"
+                                            FontWeight="SemiBold" />
+
+                                        <!-- Used / limit -->
+                                        <TextBlock
+                                            Grid.Row="3" Grid.Column="0"
+                                            Text="{x:Bind LimitLabel, Mode=OneWay}"
+                                            Style="{StaticResource CaptionTextBlockStyle}"
+                                            Foreground="#FFF5F5F5"
+                                            Opacity="0.8" />
+
+                                        <!-- Reset countdown -->
+                                        <TextBlock
+                                            Grid.Row="3" Grid.Column="1"
+                                            x:Name="CountdownText"
+                                            Style="{StaticResource CaptionTextBlockStyle}"
+                                            Foreground="#FFF5F5F5"
+                                            Opacity="0.8"
+                                            TextAlignment="Right" />
+                                    </Grid>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsRepeater.ItemTemplate>
+                </ItemsRepeater>
+
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Page>

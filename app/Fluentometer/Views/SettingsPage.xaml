@@ -1,0 +1,180 @@
+<Page
+    x:Class="Fluentometer.Views.SettingsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Background="Transparent">
+
+    <!--
+        SettingsPage — theme picker, launch-on-login, poll interval.
+
+        All data is wired in code-behind via Initialize() because the types
+        (ThemeCatalog, AppSettings) live in Fluentometer.Logic, which avoids
+        any compiled-binding dependency on WinUI types in the logic library.
+    -->
+
+    <ScrollViewer
+        VerticalScrollBarVisibility="Auto"
+        HorizontalScrollBarVisibility="Disabled"
+        Padding="20,16,20,20">
+
+        <StackPanel Spacing="24">
+
+            <!-- ============================================================
+                 Page header with back navigation
+            ============================================================ -->
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*"    />
+                </Grid.ColumnDefinitions>
+
+                <Button
+                    Grid.Column="0"
+                    x:Name="BackButton"
+                    VerticalAlignment="Center"
+                    AutomationProperties.Name="Go back to dashboard">
+                    <FontIcon
+                        Glyph="&#xE76B;"
+                        FontFamily="Segoe Fluent Icons"
+                        FontSize="14" />
+                </Button>
+
+                <TextBlock
+                    Grid.Column="1"
+                    Text="Settings"
+                    Style="{StaticResource SubtitleTextBlockStyle}"
+                    Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                    VerticalAlignment="Center" />
+            </Grid>
+
+            <!-- ============================================================
+                 Theme gallery
+            ============================================================ -->
+            <StackPanel Spacing="12">
+                <TextBlock
+                    Text="Theme"
+                    Style="{StaticResource BodyStrongTextBlockStyle}"
+                    Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+
+                <TextBlock
+                    Text="Choose a colour palette for the dashboard."
+                    Style="{StaticResource CaptionTextBlockStyle}"
+                    Opacity="0.7" />
+
+                <!-- Swatch grid is populated from code-behind (BuildThemeGallery).
+                     A named, always-present Grid avoids relying on .Parent before load. -->
+                <Grid x:Name="ThemeGalleryHost" />
+            </StackPanel>
+
+            <!-- ============================================================
+                 Gradient fill direction
+            ============================================================ -->
+            <StackPanel Spacing="8">
+                <TextBlock
+                    Text="Gradient direction"
+                    Style="{StaticResource BodyStrongTextBlockStyle}"
+                    Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+
+                <TextBlock
+                    Text="Which way each gauge bar's gradient runs as it fills."
+                    Style="{StaticResource CaptionTextBlockStyle}"
+                    Opacity="0.7" />
+
+                <RadioButtons
+                    x:Name="GradientDirectionRadios"
+                    AutomationProperties.Name="Gradient fill direction">
+                    <x:String>Bright &#x2192; Deep</x:String>
+                    <x:String>Deep &#x2192; Bright</x:String>
+                </RadioButtons>
+            </StackPanel>
+
+            <!-- ============================================================
+                 Launch on login
+            ============================================================ -->
+            <StackPanel Spacing="8">
+                <TextBlock
+                    Text="Startup"
+                    Style="{StaticResource BodyStrongTextBlockStyle}"
+                    Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+
+                <ToggleSwitch
+                    x:Name="LaunchOnLoginToggle"
+                    Header="Launch Fluentometer when I log in"
+                    AutomationProperties.Name="Launch Fluentometer at login"
+                    OnContent="On"
+                    OffContent="Off" />
+            </StackPanel>
+
+            <!-- ============================================================
+                 Poll interval
+            ============================================================ -->
+            <StackPanel Spacing="8">
+                <TextBlock
+                    Text="Poll interval"
+                    Style="{StaticResource BodyStrongTextBlockStyle}"
+                    Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+
+                <TextBlock
+                    Text="How often to check for updated usage data. Minimum 3 minutes."
+                    Style="{StaticResource CaptionTextBlockStyle}"
+                    Opacity="0.7" />
+
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"    />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <!--
+                        Padding insets the track from the control's own bounds. The default
+                        Slider template applies Padding as Margin on its root grid, so the
+                        thumb's outer halo (a 22px Border with Margin="-2", plus the focus
+                        visual) no longer overflows the left/right edge at the Min/Max
+                        positions, where it was being clipped. See screenshot bug 2026-06-18.
+                    -->
+                    <Slider
+                        Grid.Column="0"
+                        x:Name="PollIntervalSlider"
+                        Minimum="180"
+                        Maximum="1800"
+                        StepFrequency="60"
+                        TickFrequency="180"
+                        TickPlacement="BottomRight"
+                        Padding="10,0,10,0"
+                        AutomationProperties.Name="Poll interval slider (seconds)" />
+
+                    <TextBlock
+                        Grid.Column="1"
+                        x:Name="PollIntervalLabel"
+                        VerticalAlignment="Center"
+                        MinWidth="64"
+                        TextAlignment="Right"
+                        Style="{StaticResource CaptionTextBlockStyle}" />
+                </Grid>
+            </StackPanel>
+
+            <!-- ============================================================
+                 Demonstration mode (session-only; resets on restart)
+            ============================================================ -->
+            <StackPanel Spacing="8">
+                <TextBlock
+                    Text="Demonstration mode"
+                    Style="{StaticResource BodyStrongTextBlockStyle}"
+                    Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+
+                <TextBlock
+                    Text="Animate the gauges with simulated data for demos and screenshots. Resets when the app restarts."
+                    Style="{StaticResource CaptionTextBlockStyle}"
+                    Opacity="0.7" />
+
+                <ToggleSwitch
+                    x:Name="DemoModeToggle"
+                    Header="Show simulated usage"
+                    AutomationProperties.Name="Demonstration mode"
+                    OnContent="On"
+                    OffContent="Off" />
+            </StackPanel>
+
+        </StackPanel>
+    </ScrollViewer>
+</Page>

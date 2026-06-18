@@ -1,0 +1,26 @@
+# .NET (Plan 2)
+/app/**/bin/
+/app/**/obj/
+# Local
+*.user
+.DS_Store
+# Fluentometer local data should never be in the repo
+*.local.json
+# Portable release artifacts
+/dist/
+
+# Test output
+coverage/
+TestResults/
+
+# Internal / maintainer-only — not part of the shipped product, excluded from
+# the public repo (specialist agents, AI guidance, war stories, dev tooling,
+# design specs/plans, the maintainer's installer + signing workflow, dead Rust toolchain).
+.claude/
+summaries/
+scripts/
+docs/
+installer/
+CLAUDE.md
+WAYS-OF-WORKING.md
+rust-toolchain.toml

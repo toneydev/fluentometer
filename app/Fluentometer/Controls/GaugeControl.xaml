@@ -1,0 +1,105 @@
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Fluentometer.Controls">
+
+    <!--
+        GaugeControl default style — a wipe-reveal bar.
+
+        PART_Track     — transparent; the host card's fixed dark background shows through as
+                         the unfilled state.
+        PART_FillClip  — a Grid holding the full-width gradient (PART_Fill) and the estimate
+                         hatch (EstimateOverlay). GaugeControl applies a Composition InsetClip
+                         to this container and animates RightInset to reveal the left fraction.
+        PART_Glow      — a fixed-width band slid to the reveal tip via Composition Offset.X.
+
+        Visual states: ServerTruth (full opacity, no hatch) / Estimate (muted fill + hatch).
+    -->
+
+    <Style TargetType="controls:GaugeControl">
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="VerticalAlignment"   Value="Stretch" />
+        <Setter Property="IsTabStop"           Value="False"   />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="controls:GaugeControl">
+                    <Grid>
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="EstimateStates">
+                                <VisualState x:Name="ServerTruth">
+                                    <VisualState.Setters>
+                                        <Setter Target="PART_FillClip.Opacity" Value="1.0" />
+                                        <Setter Target="EstimateOverlay.Visibility" Value="Collapsed" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="Estimate">
+                                    <VisualState.Storyboard>
+                                        <Storyboard>
+                                            <DoubleAnimation
+                                                Storyboard.TargetName="PART_FillClip"
+                                                Storyboard.TargetProperty="Opacity"
+                                                To="0.45"
+                                                Duration="0:0:0.2" />
+                                        </Storyboard>
+                                    </VisualState.Storyboard>
+                                    <VisualState.Setters>
+                                        <Setter Target="EstimateOverlay.Visibility" Value="Visible" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+
+                        <!-- Track: transparent (card's fixed dark background is the unfilled state) -->
+                        <Border
+                            x:Name="PART_Track"
+                            Background="Transparent"
+                            HorizontalAlignment="Stretch"
+                            VerticalAlignment="Stretch" />
+
+                        <!-- Fill + estimate hatch, revealed together by the InsetClip on this container -->
+                        <Grid x:Name="PART_FillClip">
+                            <Rectangle
+                                x:Name="PART_Fill"
+                                Fill="{TemplateBinding Fill}"
+                                HorizontalAlignment="Stretch"
+                                VerticalAlignment="Stretch" />
+                            <Rectangle
+                                x:Name="EstimateOverlay"
+                                HorizontalAlignment="Stretch"
+                                VerticalAlignment="Stretch"
+                                Visibility="Collapsed"
+                                Opacity="0.35">
+                                <Rectangle.Fill>
+                                    <LinearGradientBrush
+                                        StartPoint="0,0"
+                                        EndPoint="1,1"
+                                        SpreadMethod="Repeat"
+                                        MappingMode="Absolute">
+                                        <GradientStop Color="White"       Offset="0"    />
+                                        <GradientStop Color="White"       Offset="0.25" />
+                                        <GradientStop Color="Transparent" Offset="0.25" />
+                                        <GradientStop Color="Transparent" Offset="0.5"  />
+                                        <GradientStop Color="White"       Offset="0.5"  />
+                                        <GradientStop Color="White"       Offset="0.75" />
+                                        <GradientStop Color="Transparent" Offset="0.75" />
+                                        <GradientStop Color="Transparent" Offset="1.0"  />
+                                    </LinearGradientBrush>
+                                </Rectangle.Fill>
+                            </Rectangle>
+                        </Grid>
+
+                        <!-- Leading-edge glow: a wide, soft bloom slid to the reveal tip via Offset.X -->
+                        <Rectangle
+                            x:Name="PART_Glow"
+                            Width="140"
+                            HorizontalAlignment="Left"
+                            VerticalAlignment="Stretch"
+                            Opacity="0"
+                            IsHitTestVisible="False"
+                            Fill="{TemplateBinding Glow}" />
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+</ResourceDictionary>

@@ -1,0 +1,41 @@
+<Project>
+  <!--
+    WinUI 3 / WindowsAppSDK import-chain notes for this repo
+    =========================================================
+    The WinUI 3 SDK ships TWO alternative PRI generation pipelines:
+
+    1. MrtCore pipeline  (MrtCore.PriGen.targets, imported by Foundation.targets)
+       Requires: Microsoft.Build.Packaging.Pri.Tasks.dll and Microsoft.Build.AppxPackage.dll,
+       which only ship with the "Windows application development" VS workload — NOT with
+       the plain dotnet CLI / Build Tools on a workload-less machine.
+       Guard property: EnableCoreMrtTooling — set to false to prevent the import.
+
+    2. Msix pipeline  (Microsoft.Build.Msix.Pri.targets, imported via WinUI.targets →
+       Microsoft.Build.Msix.targets when EnablePriGenTooling != true)
+       Requires: tools\net6.0\Microsoft.Build.Msix.dll, which ships INSIDE the
+       Microsoft.WindowsAppSDK NuGet package — NO VS workload required.
+       Enabled by: setting EnablePriGenTooling=false in the WinUI app's .csproj.
+
+    This Directory.Build.props keeps EnableCoreMrtTooling=false so that Foundation.targets
+    never imports MrtCore.PriGen.targets (which would immediately fail with MSB4062).
+    The Fluentometer.csproj then sets EnablePriGenTooling=false which causes WinUI.targets
+    to import Microsoft.Build.Msix.targets instead, enabling the NuGet-based pipeline.
+
+    CRITICAL: resources.pri is REQUIRED at runtime by Microsoft.UI.Xaml.dll.
+    WinUI cannot activate without it — an absent resources.pri causes a 0xC000027B
+    STOWED_EXCEPTION crash (combase E_FAIL) even when the app has zero .resw files.
+    This has nothing to do with localised strings; it is a WinUI framework hard dependency.
+  -->
+  <PropertyGroup>
+    <!--
+      Disable the VS-workload-dependent MrtCore.PriGen.targets pipeline.
+      Without this, Foundation.targets imports MrtCore.PriGen.targets which references
+      Microsoft.Build.Packaging.Pri.Tasks.dll (only available with a full VS workload),
+      causing MSB4062 on every headless dotnet CLI build or CI run.
+    -->
+    <EnableCoreMrtTooling>false</EnableCoreMrtTooling>
+
+    <!-- P3-A: Reproducible restores — generate and check in packages.lock.json per project. -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+</Project>
