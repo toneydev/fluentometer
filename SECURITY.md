@@ -76,8 +76,11 @@ No credentials are stored under `%LOCALAPPDATA%\Fluentometer\`, nor anywhere els
 
 ## Network Security
 
-All network calls are made in-process by the capture engine, using a single
-`System.Net.Http.HttpClient`. There is exactly one outbound destination.
+All network calls are made in-process by the capture engine. A single shared `HttpClient`
+instance issues absolute-URL requests to the enabled providers' hosts — `api.anthropic.com`
+for Claude, and `chatgpt.com` for ChatGPT when the Codex credential is detected. TLS certificate
+verification is always enabled on this client; no custom `ServerCertificateCustomValidationCallback`
+is registered. Outbound destinations are limited to the set of enabled providers.
 
 ### TLS Certificate Verification
 
@@ -88,11 +91,12 @@ operating system's trusted root store. Certificate verification is never disable
 - `DangerousAcceptAnyServerCertificateValidator` is never used.
 - No certificate-pinning bypass or "accept all" shim exists in the codebase.
 
-All HTTP requests target `https://api.anthropic.com`. Plain HTTP is never used for API calls.
+All HTTP requests target `https://api.anthropic.com` (Claude) and, when the ChatGPT provider
+is active, `https://chatgpt.com`. Plain HTTP is never used for API calls.
 
 ### Endpoint Transparency
 
-The capture engine calls `https://api.anthropic.com/api/oauth/usage`.
+The capture engine calls `https://api.anthropic.com/api/oauth/usage` (Claude provider).
 
 **Honest disclosure:** this endpoint is not listed in Anthropic's public API documentation.
 It is the same endpoint the Claude Code CLI itself uses to retrieve the current user's usage
@@ -109,6 +113,26 @@ data. Because it is undocumented:
 
 Users should be aware that estimated usage figures from the JSONL fallback are
 **approximations** and the live figures from the OAuth endpoint are the authoritative source.
+
+When the ChatGPT provider is active, the capture engine additionally calls
+`https://chatgpt.com/backend-api/wham/usage` with `Authorization: Bearer <access_token>` and
+`ChatGPT-Account-Id: <account_id>`, reading the Codex CLI token from
+`%USERPROFILE%\.codex\auth.json` (or `$CODEX_HOME\auth.json`).
+
+**Honest disclosure for the ChatGPT provider:**
+
+- This endpoint (`/backend-api/wham/usage`) is not listed in any public OpenAI API documentation.
+  It is an internal endpoint used by OpenAI's own Codex CLI. OpenAI may change its shape,
+  authentication requirements, or availability without notice. The health field will surface
+  `degraded` or `error` if the endpoint becomes unavailable.
+- The Codex CLI credential is a ChatGPT OAuth JWT stored in plaintext by the Codex CLI itself.
+  Fluentometer reads it solely to make a usage request on behalf of the same authenticated user
+  and display the result to that user. The token is never copied to another location, never
+  logged, and never transmitted to any host other than `chatgpt.com`.
+- Users who have Codex CLI installed but use only an API key (not a ChatGPT subscription) will
+  not see a ChatGPT gauge, because the detector gates on `auth_mode == "chatgpt"`.
+- No fallback local-estimate path exists for ChatGPT (unlike Claude's JSONL fallback). If the
+  endpoint is unavailable, the gauge shows a `degraded` health state with no utilization figure.
 
 ### Poll Rate
 
@@ -141,8 +165,8 @@ named-pipe server and its hardening (remote-client rejection, per-user DACL, com
 malformed-input dropping) that existed in the prior sidecar architecture are gone along with the
 sidecar — the surface they protected no longer exists.
 
-The app reads two locations owned by the current user (`~/.claude/.credentials.json` and
-`~/.claude/projects/`) and writes only under `%LOCALAPPDATA%\Fluentometer\` and a single `HKCU`
+The app reads several locations owned by the current user (see "Provider Detection Probes" below
+for the full list) and writes only under `%LOCALAPPDATA%\Fluentometer\` and a single `HKCU`
 launch-on-login value (below).
 
 ---
@@ -160,11 +184,106 @@ executable. No credentials are involved.
 
 All state written by Fluentometer lives under user-owned paths:
 
-- `%LOCALAPPDATA%\Fluentometer\` — settings and snapshot cache (no secrets)
+- `%LOCALAPPDATA%\Fluentometer\settings.json` — theme, poll interval, offline-only flag (no secrets)
+- `%LOCALAPPDATA%\Fluentometer\last-snapshot.json` — most-recent usage snapshot (no secrets)
+- `%LOCALAPPDATA%\Fluentometer\providers.json` — per-provider enable/disable flags and "seen" list (no secrets; provider IDs only, never tokens)
 - `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` — launch-on-login value (no secrets)
 
 Nothing is written to `Program Files`, `ProgramData`, `HKEY_LOCAL_MACHINE`, or any
 system-wide location.
+
+---
+
+## Provider Detection Probes
+
+Fluentometer auto-detects which AI tools are installed and signed-in by probing a fixed, explicit
+set of paths owned by the current user. This section documents every path probed, exactly what
+is (and is not) read, and the security invariants that govern the probes.
+
+### Detection Contract
+
+Detection answers only "is this provider installed AND does a signed-in session appear to exist?"
+It does **not** read or hold any credential value. The result type is
+`ProviderDetectionResult(ProviderDetectionStatus, string? ProviderDisplayName)` — a discriminated
+union with no credential fields (G-8). All detection I/O runs off the UI thread (G-9).
+
+### Read-Only Guarantee
+
+No detector writes to any probed path. Detectors are read-only by construction; there is no
+code path in any `IProviderDetector` implementation that calls `File.WriteAllText`,
+`File.AppendAllText`, `Directory.CreateDirectory`, or any other mutating I/O on the probed
+locations (G-4).
+
+### Reparse-Point Rejection
+
+Before reading any file, each detector calls `File.GetAttributes(path)` in a single syscall that
+combines the existence check and the reparse-point check atomically. If the path carries
+`FileAttributes.ReparsePoint` (symlink or NTFS junction), the detector immediately returns
+`NotFound` without reading any file content (G-6). Using a single `GetAttributes` call eliminates
+the TOCTOU race that would exist if `File.Exists` were called first and then `GetAttributes`.
+
+### No Recursive Directory Walks
+
+Every probed path is a compile-time constant derived from `Environment.SpecialFolder.UserProfile`
+or `Environment.SpecialFolder.LocalApplicationData`. No `Directory.EnumerateFiles`,
+`Directory.EnumerateDirectories`, or recursive walk is performed during detection (G-7).
+
+### Probed Paths
+
+| Path | What IS read | What is NEVER read |
+|------|-------------|-------------------|
+| `%USERPROFILE%\.claude\.credentials.json` | Structural presence of the `claudeAiOauth` JSON key only — the detector checks that the key exists, not its contents | `accessToken`, `refreshToken`, `expiresAt` — these fields are never accessed by the detector DTO; only `ClaudeCredentialReader` reads them at poll time, wrapped immediately in `RedactedString` |
+| `%USERPROFILE%\.gemini\settings.json` | `selectedAuthType` string value (e.g. `"oauth-personal"`) — used to confirm the user has authenticated and to label the gauge plan | Token fields, API key values, gcloud credential paths, or any other field in the file |
+| `%USERPROFILE%\.codex\auth.json` (or `$CODEX_HOME\auth.json` when `CODEX_HOME` is set) | `auth_mode` string (e.g. `"chatgpt"`) and structural presence of a `tokens` block — used to confirm the user has a ChatGPT subscription session, not a bare API-key Codex session | `tokens.access_token`, `tokens.refresh_token` (JWTs) — these fields are never accessed by the detector DTO; only `CodexCredentialReader` reads them at poll time, wrapped immediately in `RedactedString`. `account_id`, `email`, `last_refresh` are also not read during detection. |
+
+The `selectedAuthType` value from `settings.json` is a non-secret configuration string (one of
+`oauth-personal`, `oauth-workspace`, `api-key`, `vertex-ai`). It is not a credential: it
+describes which auth mechanism is configured, not the credential itself.
+
+The `auth_mode` value from Codex's `auth.json` (e.g. `"chatgpt"`) is similarly a non-secret
+configuration string that identifies the authentication mode, not any credential value.
+Reading it during detection is within the G-2 bound. The path is resolved by preferring
+`$CODEX_HOME` (if set) with the same GetAttributes + reparse-point guard applied to the
+env-var-supplied path before any read occurs.
+
+### Paths Explicitly NOT Probed
+
+The following paths were evaluated and rejected during the security design review. They are
+documented here so reviewers can confirm the implementation stays within the stated bounds.
+
+| Path / Variable | Reason not probed |
+|----------------|------------------|
+| `%APPDATA%\gcloud\application_default_credentials.json` | Deferred to a future version; would require a narrow DTO reading `type` only |
+| `%APPDATA%\gcloud\credentials.db` | Contains full OAuth refresh tokens in SQLite format — **never read**, escalation required before any access |
+| `GEMINI_API_KEY` environment variable value | The raw API key value is **never extracted**; name-presence check deferred; escalation required before the value is used |
+| VS Code extension storage | Unstable format, not publicly documented — deferred |
+| Any other application's PasswordVault entries | **Never accessed** — Fluentometer never reads another application's DPAPI-encrypted credential store |
+
+### Gemini Provider: Local Estimate Only, No Network Call
+
+`GeminiProvider` (the usage-data provider activated after detection) makes **no network calls**.
+It produces a local-estimate snapshot with `Source = "local"` and `Utilization = null` on all
+gauges. There is no Gemini usage endpoint accessible to third-party clients; the gauge is present
+to confirm Gemini is active, not to report server-authoritative utilization. The `IsEstimate`
+label path in the UI communicates this clearly to the user.
+
+Because there is no network call, no Gemini credential value (API key, OAuth token, or gcloud
+token) is ever transmitted anywhere by this provider.
+
+### Secret-Field Ban List
+
+The following values must never appear in any log, cache file, telemetry payload, or serialized
+structure:
+
+- OAuth access tokens, refresh tokens, or ID tokens
+- API key values
+- Raw environment variable values for any credential-related key
+- Raw credential file contents (partial or full)
+- `client_secret` values
+- Windows account usernames embedded in full filesystem paths in log output
+
+All detection catch blocks return `NotFound` or `Error` status without logging exception messages,
+since exception messages on file-access failures can contain path details (G-11).
 
 ---
 
@@ -205,7 +324,13 @@ acceptable for pre-release builds reviewed directly from source.
 
 - Signing is a manual release step performed by the maintainer with a user-supplied
   Authenticode certificate (recommended: Azure Trusted Signing).
+- `Fluentometer.exe` should be signed before the installer is compiled, so that installed
+  binaries carry the signature.
+- The compiled installer (`Fluentometer-Setup-*.exe`) should also be signed.
 - No signing certificate, `.pfx` file, or password is present in this repository.
+
+For the exact `signtool` command sequence and build steps, see
+[`installer/README.md`](installer/README.md).
 
 ---
 

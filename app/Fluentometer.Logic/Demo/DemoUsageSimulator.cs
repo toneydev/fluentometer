@@ -7,15 +7,45 @@ namespace Fluentometer.Logic.Demo;
 
 /// <summary>
 /// Pure, deterministic generator of synthetic usage snapshots for Demonstration Mode.
-/// A 30-second cycle fills the weekly gauge to 90-100% while the 5-hour gauge bursts
-/// up and resets across five windows; the cycle loops with per-cycle peak variation.
-/// No timers, randomness, or DateTime.Now — it is a pure function of (elapsed, now)
-/// so it can be unit-tested directly.
+/// Returns one <see cref="UsageSnapshot"/> per demo-supported provider, Claude first, then ChatGPT, then Gemini.
+///
+/// <para>
+/// Provider catalog (explicit table — Option B by design): each supported provider has a
+/// dedicated sampler method here.  When a real provider is added to the product, add its
+/// demo sample below and update <see cref="DemoProviderIds"/>.  This keeps the demo
+/// decoupled from runtime infrastructure (credentials, file-system detectors, etc.) while
+/// making gaps visible — the <c>DemoProviderIdSetIsExactlyClaudeGeminiAndChatGpt</c> test will
+/// fail until the table is updated.
+/// </para>
+///
+/// <para>
+/// <b>Two-axis design for estimate rendering:</b>
+/// <list type="bullet">
+///   <item><b>Source = provenance axis.</b>  All demo snapshots carry <c>Source="demo"</c>
+///     because that is what the data IS — synthetic.  We do not lie and write <c>"local"</c>.</item>
+///   <item><b>Utilization = null = render-style axis.</b>  The Gemini gauge carries
+///     <c>Utilization = null</c>, which drives <see cref="GaugeViewModel.IsEstimate"/>,
+///     the null bar, and the "local estimate" label — giving the correct visual appearance
+///     without falsifying Source.</item>
+/// </list>
+/// </para>
+///
+/// <para>
+/// No timers, randomness, or <see cref="DateTime.Now"/> — it is a pure function of
+/// (elapsedSeconds, nowUnix) so it can be unit-tested directly.
+/// </para>
 /// </summary>
 public static class DemoUsageSimulator
 {
     public const double CycleSeconds = 30.0;
     public const int SessionWindows = 5;
+
+    /// <summary>
+    /// The ordered set of provider IDs produced by this simulator.
+    /// A test asserts this equals the actual set returned by <see cref="Sample"/>;
+    /// update both when adding a new provider demo sample.
+    /// </summary>
+    public static readonly IReadOnlyList<string> DemoProviderIds = new[] { "claude", "chatgpt", "gemini" };
 
     // Per-cycle 5-hour peak heights, one row per window. Cycles index modulo the
     // table length, so successive loops differ. Every row contains at least one
@@ -33,7 +63,24 @@ public static class DemoUsageSimulator
     // Per-cycle Sonnet scaling factor (0.70-0.85) — "just more slowly".
     private static readonly double[] SonnetFactors = { 0.78, 0.72, 0.84 };
 
-    public static UsageSnapshot Sample(double elapsedSeconds, long nowUnix)
+    /// <summary>
+    /// Returns one synthetic <see cref="UsageSnapshot"/> per demo-supported provider,
+    /// in order: Claude (server-truth), ChatGPT (server-truth), Gemini (local-estimate).
+    /// The list is deterministic — identical inputs always produce identical outputs.
+    /// </summary>
+    public static IReadOnlyList<UsageSnapshot> Sample(double elapsedSeconds, long nowUnix)
+    {
+        return new[]
+        {
+            SampleClaude(elapsedSeconds, nowUnix),
+            SampleChatGpt(elapsedSeconds, nowUnix),
+            SampleGemini(nowUnix),
+        };
+    }
+
+    // ── Per-provider samplers ───────────────────────────────────────────────────
+
+    private static UsageSnapshot SampleClaude(double elapsedSeconds, long nowUnix)
     {
         if (elapsedSeconds < 0) elapsedSeconds = 0;
 
@@ -58,6 +105,61 @@ public static class DemoUsageSimulator
 
         return new UsageSnapshot("claude", nowUnix, "demo", "ok", "Demo", gauges);
     }
+
+    private static UsageSnapshot SampleChatGpt(double elapsedSeconds, long nowUnix)
+    {
+        // Phase-shifted version of SampleClaude: shift by CycleSeconds/3 (10s) so ChatGPT
+        // bars are visually distinct from Claude's at any given moment — not in sync.
+        if (elapsedSeconds < 0) elapsedSeconds = 0;
+        var shifted = elapsedSeconds + CycleSeconds / 3.0;
+
+        var cycle = (int)Math.Floor(shifted / CycleSeconds);
+        var t = shifted - cycle * CycleSeconds; // 0 .. CycleSeconds
+
+        var peaks = SessionPeaks[cycle % SessionPeaks.Length];
+        var weeklyPeak = WeeklyPeaks[cycle % WeeklyPeaks.Length];
+
+        var session = SessionValue(t, peaks);
+        var weeklyAll = weeklyPeak * WeeklyFraction(t, peaks);
+
+        var gauges = new List<Gauge>
+        {
+            new("chatgpt_primary", "ChatGPT 5-hour", session, Pct(session), nowUnix + 5 * 3600, "subscription limit"),
+            new("chatgpt_secondary", "ChatGPT Weekly", weeklyAll, Pct(weeklyAll), nowUnix + 7 * 86400, "subscription limit"),
+        };
+
+        return new UsageSnapshot("chatgpt", nowUnix, "demo", "ok", "Demo", gauges);
+    }
+
+    private static UsageSnapshot SampleGemini(long nowUnix)
+    {
+        // Mirrors the real GeminiProvider gauge shape:
+        //   - Utilization = null  → estimate rendering (IsEstimate=true, null bar, "local estimate" label)
+        //   - Source = "demo"     → provenance is honest: this IS synthetic data (not "local")
+        //   - Health = "ok"       → normal operating state for demo
+        // The estimate visual comes from Utilization=null (render-style axis),
+        // NOT from Source (provenance axis). See class-level doc for the two-axis design.
+        var gauges = new List<Gauge>
+        {
+            new Gauge(
+                Id: "gemini_session",
+                Label: "Gemini Usage",
+                Utilization: null,
+                UsedLabel: "local estimate",
+                ResetsAt: null,
+                LimitLabel: "local estimate"),
+        };
+
+        return new UsageSnapshot(
+            Provider: "gemini",
+            CapturedAt: nowUnix,
+            Source: "demo",
+            Health: "ok",
+            Plan: "Gemini (Personal)",
+            Gauges: gauges);
+    }
+
+    // ── Claude math helpers (unchanged) ────────────────────────────────────────
 
     // 5-hour gauge: ramps 0 -> peak across its window (eased), snapping back at each
     // boundary — a sawtooth.

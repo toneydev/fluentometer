@@ -1,52 +1,91 @@
 # Fluentometer
 
-An elegant Windows desktop monitor for your **Claude usage** — live **5-hour** and **weekly**
-limits shown as animated, gradient **Fluent 2** gauges. Built with **WinUI 3** on a
-**provider-agnostic C# metrics engine** that runs in-process.
+An elegant Windows desktop monitor for your **AI usage** — live **5-hour** and **weekly** limits
+shown as animated, gradient **Fluent 2** gauges. Built with **WinUI 3** on a **provider-agnostic
+C# metrics engine** that runs in-process and **auto-detects** which AI tools you're signed into.
 
 <p align="center">
-  <img src="assets/demo.gif" alt="Fluentometer dashboard showing live Claude 5-hour and weekly usage gauges" width="266">
+  <img src="assets/demo.gif" alt="Fluentometer dashboard showing live Claude, ChatGPT, and Gemini usage gauges" width="266">
 </p>
 
-> Status: **v1** — Claude monitoring only (the architecture is built to add other services
-> later). Ships **unsigned** (first-run SmartScreen prompt → "More info" → "Run anyway").
+> **Providers:** **Claude** and **ChatGPT** show authoritative server-side usage; **Gemini** shows a
+> local estimate (no consumer usage API exists for it). Each provider appears automatically when its
+> CLI is signed in. Ships **unsigned** (first-run SmartScreen → "More info" → "Run anyway").
 
 ## Download
 
 **[⬇ Download the latest release](https://github.com/toneydev/fluentometer/releases/latest)** — unzip and run `Fluentometer.exe`. No install, no .NET required.
 
-## Features
+## What it does
 
-- Live **5-hour**, **weekly**, and **per-model weekly** usage gauges with smooth Composition motion.
-- **Zero-config** if you're already signed into Claude Code — Fluentometer reuses your existing
-  session, no separate login.
-- **8 rich gradient themes** with complementary accent bars; switch live in Settings.
-- **System-tray** presence (optional launch-on-login) plus a full dashboard window.
-- Reset countdowns, plan label, and a connection indicator.
+Fluentometer sits in your system tray and shows, at a glance, how much of your AI usage limits
+you've consumed and when they reset. It **auto-detects** the AI CLIs you're already signed into and
+adds a gauge group for each — no API keys, no separate logins, no configuration. Sign into one tool
+or all three.
 
-## How it works
+For each provider it shows a card group:
 
-A C# capture engine (`app/Fluentometer.Logic/Capture/`) does all the data work in-process, behind
-the `IUsageClient` seam the UI consumes. For usage data it uses a **hybrid** source:
+- A **5-hour** (rolling session) gauge and a **weekly** gauge, plus **per-model weekly** gauges for
+  Claude where the plan reports them.
+- A big **percent used**, the **limit label**, and a live **reset countdown** ("resets in 4h 12m").
+- Your **plan** (e.g. "Claude Pro", "ChatGPT Plus") and a **connection indicator**.
 
-- **Primary:** the authoritative Anthropic `/api/oauth/usage` endpoint (the same data behind
-  Claude Code's `/usage`), reusing the OAuth token already on disk. Polled no more than once every
-  ~3 minutes.
-- **Fallback:** local Claude Code session logs (`~/.claude/projects/**/*.jsonl`) when the endpoint
-  is unavailable, clearly labelled as an estimate.
+## Providers & how it works
 
-The app **never transmits your data anywhere** except your own authenticated requests to
-`api.anthropic.com` over verified TLS. Your token is read, never logged or copied. See
-[`SECURITY.md`](SECURITY.md).
+A C# capture engine (`app/Fluentometer.Logic/Capture/`) does all the data work in-process behind the
+`IUsageProvider` seam. Each provider is **detected**, **polled**, and **rendered independently**, and
+reads only credentials you already have on disk — **read-only, never written, never logged, never
+copied.** All network calls go over OS-verified **TLS** to the provider's own host.
 
-If you're not signed into Claude Code, the dashboard shows a friendly "sign in" prompt instead of
-data.
+| Provider | Usage data | Detected via | If unavailable |
+|----------|-----------|--------------|----------------|
+| **Claude** | Authoritative Anthropic `/api/oauth/usage` (the data behind Claude Code's `/usage`) | Claude Code's OAuth token in `~/.claude` | Falls back to local Claude Code session logs (`~/.claude/projects/**/*.jsonl`), clearly labelled as an estimate |
+| **ChatGPT** | Authoritative usage from OpenAI's Codex backend, reusing your Codex session | OpenAI Codex CLI credential in `~/.codex` (honors `CODEX_HOME`); only when signed in with a ChatGPT subscription, not an API key | Shows a degraded state (no local fallback exists) |
+| **Gemini** | **Local estimate only** — no consumer usage endpoint exists; always shown with a "~ est." badge so it's never mistaken for server truth | Gemini CLI credential in `~/.gemini` | — |
+
+Polling is rate-limited to **no more than once every ~3 minutes** per provider (configurable floor),
+with automatic back-off on rate limits.
+
+Fluentometer **never transmits your data anywhere** except your own authenticated requests to each
+provider's API, and only to display the result back to you. See [`SECURITY.md`](SECURITY.md) for the
+full threat model, the exact endpoints called per provider, and how credentials are handled.
+
+## Dashboard states
+
+The dashboard adapts to each provider's health:
+
+- **Live** — animated gauges with current utilization.
+- **Sign in** — if you're not signed into a detected tool, a friendly prompt replaces its data
+  instead of showing zeros.
+- **Degraded** — when authoritative data is briefly unavailable, Claude shows a labelled local
+  estimate; ChatGPT shows a degraded card (it has no local fallback).
+- **Refresh** — a manual refresh button requests a fresh snapshot on demand.
+
+## Settings
+
+Open Settings from the dashboard (gear icon):
+
+- **Theme** — 8 rich gradient palettes with complementary accent bars; switch live.
+- **Gradient direction** — choose whether each bar's gradient runs bright→deep or deep→bright.
+- **Startup** — optionally launch Fluentometer when you log in.
+- **Poll interval** — how often to check for updated usage (slider, **3-minute minimum**).
+- **Monitored services** — turn each detected provider on or off for the dashboard; newly detected
+  tools surface a one-time notification.
+- **Demonstration mode** — animate the gauges with simulated data for demos and screenshots
+  (session-only; resets on restart, and renders every supported provider).
 
 ## Requirements
 
 - **Windows 10 1809+ / Windows 11.**
-- **For live data:** be signed into Claude Code — Fluentometer reuses that session (no separate login).
+- **For live data:** be signed into the tool(s) you want to monitor — Claude Code, OpenAI Codex CLI,
+  and/or Gemini CLI. Fluentometer reuses those sessions (no separate login).
 - **To build from source:** [.NET 10 SDK](https://dotnet.microsoft.com/) and PowerShell 7+.
+
+## Data & uninstall
+
+Settings and the cached last snapshot live under `%LOCALAPPDATA%\Fluentometer` (per-user). The
+portable build needs no installation — delete the unzipped folder to remove the app, and delete
+`%LOCALAPPDATA%\Fluentometer` to remove all of its data. No credentials are ever stored there.
 
 ## Build & run from source
 
@@ -73,12 +112,12 @@ dotnet test
 
 | Path | What |
 |------|------|
-| `app/Fluentometer/` | WinUI 3 app (views, controls, tray, theming) |
-| `app/Fluentometer.Logic/` | Testable C# logic: `Capture/` (credential read, OAuth polling, JSONL fallback, poll loop), `Store/` (snapshot cache), DTOs, ViewModels, theming, formatting |
+| `app/Fluentometer/` | WinUI 3 app — views, controls, tray, theming, Composition motion |
+| `app/Fluentometer.Logic/` | Testable C# logic: `Capture/` (per-provider credential read, detection, OAuth/usage polling, provider registry, poll loop), `Store/` (snapshot cache), `Settings/` (provider enable/disable), DTOs, ViewModels, theming, formatting |
 | `app/Fluentometer.Tests/` | xUnit tests |
 
 ## License & contributing
 
-Open-source security posture: the design is publicly reviewable and no secrets live in the repo
-or its history. See [`SECURITY.md`](SECURITY.md) for the threat model and how credentials are
-handled.
+Open-source security posture: the design is publicly reviewable and no secrets live in the repo or
+its history. See [`SECURITY.md`](SECURITY.md) for the threat model and how credentials are handled
+per provider.

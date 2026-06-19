@@ -33,7 +33,10 @@ internal sealed class FakeHttpHandler : HttpMessageHandler
 
     protected override Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
-        => Task.FromResult(_respond(request));
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(_respond(request));
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -346,19 +349,36 @@ public class OauthUsageClientTests
     }
 
     [Fact]
-    public async Task UnknownGroupFallsBackToKindAsLabel()
+    public async Task UnknownGroupIsRenderedWithHumanizedFallbackLabel()
     {
         const string body = """
             {"limits":[{"kind":"some_future_kind","group":"some_future_group","percent":10,"severity":"normal","resets_at":null,"scope":null}]}
             """;
-        // NOTE: unknown groups are filtered out (only session/weekly pass). So this
-        // produces an empty gauge list, not a gauge labelled "some_future_kind".
+        // Unknown groups are no longer dropped: every limits[] entry becomes a gauge so a
+        // future plan/limit type shows up automatically. The kind is humanized and
+        // provider-prefixed: "some_future_kind" → "Claude Some Future Kind".
         var (client, _) = MakeClient(HttpStatusCode.OK, body);
 
         var result = await client.FetchAsync("https://api.anthropic.com", "tok", CancellationToken.None);
 
         var ok = Assert.IsType<UsageResult.Ok>(result);
-        Assert.Empty(ok.Gauges);
+        var gauge = Assert.Single(ok.Gauges);
+        Assert.Equal("Claude Some Future Kind", gauge.Label);
+    }
+
+    [Fact]
+    public async Task UnknownGroupWithScopedModelAppendsDisplayName()
+    {
+        const string body = """
+            {"limits":[{"kind":"monthly_opus","group":"monthly","percent":10,"severity":"normal","resets_at":null,"scope":{"model":{"display_name":"Opus"}}}]}
+            """;
+        var (client, _) = MakeClient(HttpStatusCode.OK, body);
+
+        var result = await client.FetchAsync("https://api.anthropic.com", "tok", CancellationToken.None);
+
+        var ok = Assert.IsType<UsageResult.Ok>(result);
+        var gauge = Assert.Single(ok.Gauges);
+        Assert.Equal("Claude Monthly Opus (Opus)", gauge.Label);
     }
 
     // ── User-Agent header ─────────────────────────────────────────────────────

@@ -25,6 +25,10 @@ public class UsageViewModelTests
         public void SetConnected(bool c) => ConnectionChanged?.Invoke(c);
     }
 
+    // -------------------------------------------------------------------------
+    // Backward-compat: flat Gauges + Plan + Health still work for single provider
+    // -------------------------------------------------------------------------
+
     [Fact]
     public void SnapshotUpdatesGaugesPlanAndHealth()
     {
@@ -85,7 +89,6 @@ public class UsageViewModelTests
         var client = new FakeClient();
         var vm = new UsageViewModel(client, new SyncDispatcher());
 
-        // Push a snapshot with 3 gauges (all canonical ids).
         client.PushSnapshot(new UsageSnapshot("claude", 1, "oauth", "ok", "Max",
             new List<Gauge>
             {
@@ -169,5 +172,136 @@ public class UsageViewModelTests
             new List<Gauge> { new("session", "Claude 5-hour", 0.77, "77%", 1, "5-hour limit") }));
 
         Assert.Equal(0.77, vm.Gauges[0].Utilization);
+    }
+
+    // -------------------------------------------------------------------------
+    // Multi-provider (Groups) tests
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void MultipleProvidersCreateSeparateGroups()
+    {
+        var client = new FakeClient();
+        var vm = new UsageViewModel(client, new SyncDispatcher());
+
+        client.PushSnapshot(new UsageSnapshot("claude", 1, "oauth", "ok", "Max",
+            new List<Gauge> { new("session", "Claude 5-hour", 0.42, "42%", 1, "5-hour") }));
+        client.PushSnapshot(new UsageSnapshot("gemini", 1, "local", "ok", "Gemini",
+            new List<Gauge> { new("daily", "Gemini Daily", 0.10, "10%", 1, "daily") }));
+
+        Assert.Equal(2, vm.Groups.Count);
+        Assert.Equal("claude", vm.Groups[0].ProviderId);
+        Assert.Equal("gemini", vm.Groups[1].ProviderId);
+    }
+
+    [Fact]
+    public void FlatGaugesContainsAllGroupGaugesInOrder()
+    {
+        var client = new FakeClient();
+        var vm = new UsageViewModel(client, new SyncDispatcher());
+
+        client.PushSnapshot(new UsageSnapshot("claude", 1, "oauth", "ok", "Max",
+            new List<Gauge>
+            {
+                new("session", "Claude 5-hour", 0.42, "42%", 1, "5-hour"),
+                new("weekly_all", "Claude Weekly", 0.61, "61%", 1, "weekly"),
+            }));
+        client.PushSnapshot(new UsageSnapshot("gemini", 1, "local", "ok", "Gemini",
+            new List<Gauge> { new("daily", "Gemini Daily", 0.10, "10%", 1, "daily") }));
+
+        // Flat Gauges = Claude's 2 + Gemini's 1
+        Assert.Equal(3, vm.Gauges.Count);
+        Assert.Equal("Claude 5-hour", vm.Gauges[0].Label);
+        Assert.Equal("Claude Weekly", vm.Gauges[1].Label);
+        Assert.Equal("Gemini Daily", vm.Gauges[2].Label);
+    }
+
+    [Fact]
+    public void HealthRollupPicksWorstAcrossGroups()
+    {
+        var client = new FakeClient();
+        var vm = new UsageViewModel(client, new SyncDispatcher());
+
+        // Claude ok, Gemini degraded → rollup should be degraded.
+        client.PushSnapshot(new UsageSnapshot("claude", 1, "oauth", "ok", "Max", new List<Gauge>()));
+        client.PushSnapshot(new UsageSnapshot("gemini", 1, "local", "degraded", "Gemini", new List<Gauge>()));
+
+        Assert.Equal("degraded", vm.Health);
+    }
+
+    [Fact]
+    public void HealthRollupNeedsSigninOutranksDegraded()
+    {
+        var client = new FakeClient();
+        var vm = new UsageViewModel(client, new SyncDispatcher());
+
+        client.PushSnapshot(new UsageSnapshot("claude", 1, "jsonl", "degraded", "Max", new List<Gauge>()));
+        client.PushSnapshot(new UsageSnapshot("gemini", 1, "local", "needs-signin", "Gemini", new List<Gauge>()));
+
+        Assert.Equal("needs-signin", vm.Health);
+    }
+
+    [Fact]
+    public void HealthRollupErrorOutranksNeedsSignin()
+    {
+        var client = new FakeClient();
+        var vm = new UsageViewModel(client, new SyncDispatcher());
+
+        client.PushSnapshot(new UsageSnapshot("claude", 1, "jsonl", "needs-signin", "Max", new List<Gauge>()));
+        client.PushSnapshot(new UsageSnapshot("gemini", 1, "local", "error", "Gemini", new List<Gauge>()));
+
+        Assert.Equal("error", vm.Health);
+    }
+
+    [Fact]
+    public void SecondSnapshotSameProviderUpdatesGroupInPlace()
+    {
+        var client = new FakeClient();
+        var vm = new UsageViewModel(client, new SyncDispatcher());
+
+        client.PushSnapshot(new UsageSnapshot("claude", 1, "oauth", "ok", "Max",
+            new List<Gauge> { new("session", "Claude 5-hour", 0.10, "10%", 1, "5-hour") }));
+        // Only one group so far.
+        Assert.Single(vm.Groups);
+
+        client.PushSnapshot(new UsageSnapshot("claude", 2, "oauth", "ok", "Max",
+            new List<Gauge> { new("session", "Claude 5-hour", 0.20, "20%", 1, "5-hour") }));
+        // Still one group, updated value.
+        Assert.Single(vm.Groups);
+        Assert.Equal(0.20, vm.Groups[0].Gauges[0].Utilization);
+    }
+
+    [Fact]
+    public void ProviderGroupTitleCapitalizesProviderId()
+    {
+        var client = new FakeClient();
+        var vm = new UsageViewModel(client, new SyncDispatcher());
+
+        client.PushSnapshot(new UsageSnapshot("gemini", 1, "local", "ok", "Gemini", new List<Gauge>()));
+
+        Assert.Equal("Gemini", vm.Groups[0].Title);
+    }
+
+    [Fact]
+    public void DemoSnapshotRoutedThroughGroupPath()
+    {
+        var client = new FakeClient();
+        var vm = new UsageViewModel(client, new SyncDispatcher());
+
+        vm.ApplyDemoSnapshot(new UsageSnapshot("claude", 1, "demo", "ok", "Demo",
+            new List<Gauge>
+            {
+                new("session", "Claude 5-hour", 0.33, "33%", 1, "5-hour limit"),
+            }));
+
+        // Demo snapshot must create a "claude" group and populate its gauges.
+        Assert.Single(vm.Groups);
+        Assert.Equal("claude", vm.Groups[0].ProviderId);
+        Assert.Single(vm.Groups[0].Gauges);
+        Assert.Equal(0.33, vm.Groups[0].Gauges[0].Utilization);
+
+        // Flat Gauges also reflects it.
+        Assert.Single(vm.Gauges);
+        Assert.Equal(0.33, vm.Gauges[0].Utilization);
     }
 }

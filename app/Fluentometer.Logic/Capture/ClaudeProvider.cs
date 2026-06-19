@@ -12,6 +12,19 @@ namespace Fluentometer.Logic.Capture;
 /// </summary>
 public interface IUsageProvider
 {
+    /// <summary>
+    /// Stable identifier for this provider (e.g. "claude", "gemini").
+    /// Used as the per-provider cache key and to route snapshots in the ViewModel.
+    /// </summary>
+    string ProviderId { get; }
+
+    /// <summary>
+    /// Minimum time between polls for this provider.
+    /// <see cref="LiveUsageClient"/> clamps the shared timer to the MAX of all
+    /// registered providers' floors so no provider is polled faster than it allows.
+    /// </summary>
+    TimeSpan MinPollInterval { get; }
+
     Task<UsageSnapshot> SnapshotAsync(long nowUnix, CancellationToken ct);
 }
 
@@ -24,6 +37,13 @@ public sealed class ClaudeProvider(
     IOauthUsageClient oauth,
     IJsonlReader jsonl) : IUsageProvider
 {
+    /// <inheritdoc/>
+    public string ProviderId => "claude";
+
+    /// <inheritdoc/>
+    /// <remarks>180 s — the endpoint is rate-limited; do not poll faster than this.</remarks>
+    public TimeSpan MinPollInterval => TimeSpan.FromSeconds(180);
+
     /// <inheritdoc/>
     public async Task<UsageSnapshot> SnapshotAsync(long nowUnix, CancellationToken ct)
     {

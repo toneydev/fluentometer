@@ -1,5 +1,6 @@
 // app/Fluentometer.Tests/Demo/DemoDriverTests.cs
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Fluentometer.Logic.Demo;
@@ -35,13 +36,14 @@ public class DemoDriverTests
         return (vm, client, driver);
     }
 
+    // ── Existing behaviour — preserved ─────────────────────────────────────────
+
     [Fact]
-    public void BeginEntersDemoModeAndPopulatesThreeGauges()
+    public void BeginEntersDemoMode()
     {
         var (vm, _, driver) = Build();
         driver.Begin();
         Assert.True(vm.IsDemoMode);
-        Assert.Equal(3, vm.Gauges.Count);
     }
 
     [Fact]
@@ -50,7 +52,9 @@ public class DemoDriverTests
         var (vm, _, driver) = Build();
         driver.Begin();
         driver.Advance(15.0);
-        Assert.True(vm.Gauges[1].Utilization > 0.0); // weekly has climbed
+        // Claude weekly (provider 0, gauge 1) has climbed above zero.
+        var claudeGroup = vm.Groups[0];
+        Assert.True(claudeGroup.Gauges[1].Utilization > 0.0);
     }
 
     [Fact]
@@ -79,9 +83,119 @@ public class DemoDriverTests
         driver.Begin();
         driver.End();
         client.PushSnapshot(new UsageSnapshot("claude", 1, "oauth", "ok", "Max",
-            new System.Collections.Generic.List<Gauge>
+            new List<Gauge>
             { new("session", "Claude 5-hour", 0.5, "50%", 1, "5-hour limit") }));
-        Assert.Single(vm.Gauges);
         Assert.Equal("Max", vm.Plan);
+    }
+
+    // ── Multi-provider Begin() ──────────────────────────────────────────────────
+
+    [Fact]
+    public void Begin_PopulatesClaudeChatGptAndGeminiGroups()
+    {
+        var (vm, _, driver) = Build();
+        driver.Begin();
+
+        // Should have three provider groups: claude [0], chatgpt [1], gemini [2].
+        Assert.Equal(3, vm.Groups.Count);
+        Assert.Equal("claude", vm.Groups[0].ProviderId);
+        Assert.Equal("chatgpt", vm.Groups[1].ProviderId);
+        Assert.Equal("gemini", vm.Groups[2].ProviderId);
+    }
+
+    [Fact]
+    public void Begin_ClaudeGroupHasThreeGauges()
+    {
+        var (vm, _, driver) = Build();
+        driver.Begin();
+        Assert.Equal(3, vm.Groups[0].Gauges.Count);
+    }
+
+    [Fact]
+    public void Begin_GeminiGroupHasOneGaugeWithNullUtilization()
+    {
+        var (vm, _, driver) = Build();
+        driver.Begin();
+
+        // Gemini is now at index 2 (Claude [0], ChatGPT [1], Gemini [2]).
+        var geminiGroup = vm.Groups[2];
+        Assert.Single(geminiGroup.Gauges);
+        // Null Utilization drives estimate badge / null bar / "local estimate" label.
+        Assert.Null(geminiGroup.Gauges[0].Utilization);
+    }
+
+    [Fact]
+    public void Begin_GeminiGaugeIsMarkedAsEstimate()
+    {
+        var (vm, _, driver) = Build();
+        driver.Begin();
+        // Gemini is now at index 2 (Claude [0], ChatGPT [1], Gemini [2]).
+        var geminiGauge = vm.Groups[2].Gauges[0];
+        Assert.True(geminiGauge.IsEstimate);
+    }
+
+    [Fact]
+    public void Begin_FlatGaugesContainsAllDemoGauges()
+    {
+        var (vm, _, driver) = Build();
+        driver.Begin();
+        // Claude has 3, ChatGPT has 2, Gemini has 1 → total 6 in flat mirror.
+        Assert.Equal(6, vm.Gauges.Count);
+    }
+
+    // ── End() stale-group fix ───────────────────────────────────────────────────
+
+    [Fact]
+    public void End_ClearsAllDemoGroups_BeforeRefresh()
+    {
+        var (vm, _, driver) = Build();
+        driver.Begin();
+
+        // Verify demo groups are there before End: Claude [0], ChatGPT [1], Gemini [2].
+        Assert.Equal(3, vm.Groups.Count);
+
+        driver.End();
+
+        // After End(), all demo-only groups must be cleared so a provider that
+        // isn't actually installed (e.g. Gemini absent) doesn't persist on the dashboard.
+        Assert.Empty(vm.Groups);
+        Assert.Empty(vm.Gauges);
+    }
+
+    [Fact]
+    public void End_DemoOnlyGeminiGroupDoesNotPersistAfterLiveClaudeSnapshot()
+    {
+        var (vm, client, driver) = Build();
+        driver.Begin();
+        driver.End();
+
+        // Simulate live data repopulating Claude — Gemini is not installed, so no
+        // Gemini snapshot arrives. The dashboard must show only Claude.
+        client.PushSnapshot(new UsageSnapshot("claude", 1, "oauth", "ok", "Max",
+            new List<Gauge>
+            {
+                new("session", "Claude 5-hour", 0.5, "50%", 1, "5-hour limit"),
+                new("weekly_all", "Claude Weekly", 0.3, "30%", 1, "weekly limit"),
+            }));
+
+        Assert.Single(vm.Groups);
+        Assert.Equal("claude", vm.Groups[0].ProviderId);
+        Assert.Equal(2, vm.Gauges.Count);
+    }
+
+    [Fact]
+    public void End_LiveClaudeSnapshotLandsCorrectlyAfterDemoExit()
+    {
+        var (vm, client, driver) = Build();
+        driver.Begin();
+        driver.End();
+
+        client.PushSnapshot(new UsageSnapshot("claude", 1, "oauth", "ok", "Max",
+            new List<Gauge>
+            { new("session", "Claude 5-hour", 0.5, "50%", 1, "5-hour limit") }));
+
+        Assert.Equal("Max", vm.Plan);
+        Assert.Single(vm.Gauges);
+        Assert.Equal(0.5, vm.Gauges[0].Utilization);
     }
 }

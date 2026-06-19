@@ -22,32 +22,39 @@ namespace Fluentometer.Logic.Store;
 internal partial class SnapshotJsonContext : JsonSerializerContext;
 
 /// <summary>
-/// Persists and retrieves the most recent <see cref="UsageSnapshot"/> to/from disk.
+/// Persists and retrieves the most recent <see cref="UsageSnapshot"/> to/from disk,
+/// keyed by provider identifier.
+///
+/// <para>
+/// Per-provider file naming: <c>last-snapshot-{providerId}.json</c>.
+/// The legacy file <c>last-snapshot.json</c> (written by v0.x with a single provider)
+/// is ignored; the first warm-start will simply produce no cached value for "claude"
+/// until the provider writes a keyed file.
+/// </para>
 /// </summary>
 public interface ISnapshotCache
 {
     /// <summary>
-    /// Loads the last saved snapshot from disk.
+    /// Loads the last saved snapshot for <paramref name="providerId"/> from disk.
     /// Returns <c>null</c> if no file exists or the file cannot be read/deserialized.
     /// Never throws.
     /// </summary>
-    UsageSnapshot? LoadLast();
+    UsageSnapshot? LoadLast(string providerId);
 
     /// <summary>
-    /// Saves <paramref name="snapshot"/> to disk, creating the cache directory if needed.
+    /// Saves <paramref name="snapshot"/> for <paramref name="providerId"/> to disk,
+    /// creating the cache directory if needed.
     /// Failures are swallowed — the cache is best-effort.
     /// </summary>
-    void SaveLast(UsageSnapshot snapshot);
+    void SaveLast(string providerId, UsageSnapshot snapshot);
 }
 
 /// <summary>
 /// File-backed implementation of <see cref="ISnapshotCache"/>.
-/// Default storage path: <c>%LOCALAPPDATA%\Fluentometer\last-snapshot.json</c>.
+/// Default storage path: <c>%LOCALAPPDATA%\Fluentometer\last-snapshot-{providerId}.json</c>.
 /// </summary>
 public sealed class SnapshotCache : ISnapshotCache
 {
-    private const string FileName = "last-snapshot.json";
-
     private readonly string _directory;
 
     /// <summary>
@@ -63,12 +70,14 @@ public sealed class SnapshotCache : ISnapshotCache
                 "Fluentometer");
     }
 
+    private static string FileName(string providerId) => $"last-snapshot-{providerId}.json";
+
     /// <inheritdoc/>
-    public UsageSnapshot? LoadLast()
+    public UsageSnapshot? LoadLast(string providerId)
     {
         try
         {
-            var path = Path.Combine(_directory, FileName);
+            var path = Path.Combine(_directory, FileName(providerId));
             var bytes = File.ReadAllBytes(path);
             return JsonSerializer.Deserialize(bytes, SnapshotJsonContext.Default.UsageSnapshot);
         }
@@ -79,12 +88,12 @@ public sealed class SnapshotCache : ISnapshotCache
     }
 
     /// <inheritdoc/>
-    public void SaveLast(UsageSnapshot snapshot)
+    public void SaveLast(string providerId, UsageSnapshot snapshot)
     {
         try
         {
             Directory.CreateDirectory(_directory);
-            var path = Path.Combine(_directory, FileName);
+            var path = Path.Combine(_directory, FileName(providerId));
             var json = JsonSerializer.SerializeToUtf8Bytes(
                 snapshot,
                 SnapshotJsonContext.Default.UsageSnapshot);

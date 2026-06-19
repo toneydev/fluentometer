@@ -7,34 +7,46 @@
     Background="Transparent">
 
     <!--
-        DashboardPage — neutral gauge panels bound to UsageViewModel.
+        DashboardPage — gauge panels grouped by provider, bound to UsageViewModel.
 
-        Layout: two-column on wide windows (>= 900 px), single column on narrow,
-        driven by AdaptiveTrigger changing the ItemsRepeater's UniformGridLayout
-        MaximumRowsOrColumns. Cards use a neutral system brush (follows Windows
-        light/dark); the theme's rich gradient is painted on each gauge bar,
-        rebuilt on ThemeService.ThemeChanged via ApplyTheme().
-        A 1-second DispatcherTimer drives the reset countdown labels.
+        Layout: OUTER ItemsRepeater uses StackLayout (vertical) over Groups — never
+        a UniformGridLayout, so it can never divide-by-zero on resize (Gotcha 1).
+        Each group renders a header (provider title + health pill) and an INNER
+        ItemsRepeater using UniformGridLayout over that group's Gauges.
+
+        The INNER UniformGridLayout keeps MinItemWidth="160" (Gotcha 1 — div-by-zero
+        guard). The window minimum size enforced by Ui/WindowMinSize.cs (280 DIP
+        effective) keeps available content width > 160 at all times. DO NOT lower
+        the window min-size or raise MinItemWidth without reading
+        summaries/2026-06-17-uniformgridlayout-divbyzero-on-resize.md.
+
+        Gauge cards use identical x:Bind bindings to today's single-repeater layout
+        (value/bar/detail/estimate all on the SAME channel as the label — Gotcha 2).
+        ElementPrepared on each inner repeater handles ONLY theme brushes and the
+        countdown seed; it never pushes values. See
+        summaries/2026-06-18-gauge-value-label-desync-itemsrepeater-recycling.md.
+
+        AdaptiveTrigger drives MaximumRowsOrColumns on realized inner UniformGridLayouts
+        via code-behind (DashboardPage.xaml.cs SetInnerColumns), because a named target
+        on a DataTemplate element is not addressable from VisualStateManager.Setters.
     -->
 
     <Grid>
+        <!-- VisualStateManager still defines the wide/narrow breakpoint; the actual
+             column count is applied to each realized inner layout in code-behind. -->
         <VisualStateManager.VisualStateGroups>
             <VisualStateGroup x:Name="WindowSizeStates">
                 <VisualState x:Name="WideState">
                     <VisualState.StateTriggers>
                         <AdaptiveTrigger MinWindowWidth="900" />
                     </VisualState.StateTriggers>
-                    <VisualState.Setters>
-                        <Setter Target="GaugeLayout.MaximumRowsOrColumns" Value="2" />
-                    </VisualState.Setters>
+                    <!-- Setter is intentionally empty: code-behind drives inner layouts. -->
                 </VisualState>
                 <VisualState x:Name="NarrowState">
                     <VisualState.StateTriggers>
                         <AdaptiveTrigger MinWindowWidth="0" />
                     </VisualState.StateTriggers>
-                    <VisualState.Setters>
-                        <Setter Target="GaugeLayout.MaximumRowsOrColumns" Value="1" />
-                    </VisualState.Setters>
+                    <!-- Setter is intentionally empty: code-behind drives inner layouts. -->
                 </VisualState>
             </VisualStateGroup>
         </VisualStateManager.VisualStateGroups>
@@ -47,23 +59,12 @@
             <StackPanel Spacing="16">
 
                 <!-- ============================================================
-                     Header strip: connection dot + refresh / settings buttons,
-                     right-aligned and centered on one horizontal axis. The app
-                     name lives in the title bar, so it is intentionally not
-                     repeated here. Subscription type is also intentionally not
-                     shown: the credential's subscriptionType reflects the *next*
-                     billing cycle, not the currently-active plan, so it can
-                     contradict what the Claude console shows.
+                     Header strip: connection dot + refresh / settings buttons.
                 ============================================================ -->
                 <!--
                     Top margin (6px) keeps the buttons off the ScrollViewer's content-top
-                    edge so the keyboard focus rectangle — drawn 3px outside the button
-                    bounds (FocusVisualMargin="-3") plus its line thickness — isn't clipped
-                    at the top. Both buttons get an identical explicit 32x32 box with
-                    Padding="0" so they are exactly the same size with matching focus
-                    outlines (the icons differ in glyph weight, so they keep their own
-                    FontSize, but the boxes are uniform). The dot stays vertically centred
-                    in the same row, so its centre aligns with the buttons' centres.
+                    edge so the keyboard focus rectangle (drawn 3px outside the button
+                    bounds, FocusVisualMargin="-3") isn't clipped at the top.
                 -->
                 <Grid ColumnSpacing="10" Margin="0,6,0,4">
                     <Grid.ColumnDefinitions>
@@ -138,7 +139,7 @@
                     </StackPanel>
                 </Border>
 
-                <!-- Degraded health banner -->
+                <!-- Degraded health banner (driven by worst-of Health rollup) -->
                 <InfoBar
                     x:Name="DegradedBanner"
                     IsOpen="False"
@@ -148,7 +149,7 @@
                     IsClosable="False"
                     AutomationProperties.Name="Degraded mode warning" />
 
-                <!-- Needs-signin card -->
+                <!-- Needs-signin card (driven by worst-of Health rollup) -->
                 <InfoBar
                     x:Name="NeedsSignInBanner"
                     IsOpen="False"
@@ -159,102 +160,262 @@
                     AutomationProperties.Name="Sign in required notice" />
 
                 <!-- ============================================================
-                     Gauge panels — one per GaugeViewModel in UsageViewModel.Gauges.
-                     ItemsRepeater with UniformGridLayout: 1 column (narrow) or
-                     2 columns (wide, driven by AdaptiveTrigger above).
+                     Provider group sections.
+
+                     OUTER: ItemsRepeater with StackLayout (vertical). StackLayout
+                     does not divide, so it can never crash on resize regardless of
+                     available width (Gotcha 1 — outer half of the div-by-zero guard).
+
+                     INNER: one UniformGridLayout per group, with MinItemWidth="160"
+                     (Gotcha 1 — inner half). The window min-size (Ui/WindowMinSize.cs,
+                     280 DIP) ensures available content width always exceeds 160.
+
+                     Gauge card DataTemplate is IDENTICAL to the old single-repeater
+                     design: value/bar/detail/estimate all bound via x:Bind on the same
+                     channel as the label (Gotcha 2). ElementPrepared only applies theme
+                     brushes and seeds the countdown.
                 ============================================================ -->
                 <ItemsRepeater
-                    x:Name="GaugeRepeater"
-                    AutomationProperties.Name="Usage gauge panels">
+                    x:Name="GroupRepeater"
+                    AutomationProperties.Name="Provider usage group sections">
                     <ItemsRepeater.Layout>
-                        <UniformGridLayout
-                            x:Name="GaugeLayout"
-                            MaximumRowsOrColumns="1"
-                            MinItemWidth="160"
-                            MinItemHeight="176"
-                            ItemsStretch="Fill"
-                            MinRowSpacing="16"
-                            MinColumnSpacing="16" />
+                        <!-- StackLayout: vertical, no division, safe at any width. -->
+                        <StackLayout Orientation="Vertical" Spacing="24" />
                     </ItemsRepeater.Layout>
                     <ItemsRepeater.ItemTemplate>
-                        <DataTemplate x:DataType="viewmodels:GaugeViewModel">
-                            <!--
-                                Each gauge card IS the progress bar: a full-bleed GaugeControl
-                                wipe-reveals the theme gradient to the utilization % over a fixed
-                                dark track, with white text overlaid directly on the bar.
-                                Named text elements are reachable by DashboardPage.FindNamedChild
-                                (a recursive visual-tree search).
-                            -->
-                            <Border
-                                CornerRadius="12"
-                                Background="#FF1C1C1E"
-                                BorderBrush="#26FFFFFF"
-                                BorderThickness="1"
-                                MinHeight="120"
-                                AutomationProperties.Name="{x:Bind Label, Mode=OneWay}">
-                                <Grid>
-                                    <!-- Layer 0: the bar. Value/estimate ride the same
-                                         x:Bind channel as the label so they cannot desync
-                                         from it under ItemsRepeater recycling. The x:Name
-                                         remains so ApplyTheme can paint Fill/Glow brushes. -->
-                                    <controls:GaugeControl
-                                        x:Name="GaugeBar"
-                                        Value="{x:Bind BarValue, Mode=OneWay}"
-                                        IsEstimate="{x:Bind IsEstimate, Mode=OneWay}" />
+                        <DataTemplate x:DataType="viewmodels:ProviderGroupViewModel">
+                            <StackPanel Spacing="10">
 
-                                    <!-- Overlay text (white) sits directly on the bar; the fixed
-                                         dark track + saturated fill keep it legible without a scrim. -->
-                                    <Grid Padding="20,14">
-                                        <Grid.RowDefinitions>
-                                            <RowDefinition Height="Auto" />
-                                            <RowDefinition Height="*"    />
-                                            <RowDefinition Height="Auto" />
-                                            <RowDefinition Height="Auto" />
-                                        </Grid.RowDefinitions>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*"    />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
+                                <!-- Group section header: provider title + health pill.
+                                     VISIBILITY: code-behind (GroupRepeater_ElementPrepared) collapses
+                                     this entire row when Groups.Count == 1 so the single-Claude view
+                                     looks identical to the pre-multi-provider design.
+                                     When multi-provider (Count > 1) the row is shown and the provider
+                                     label separates each section visually.
+                                     x:Name on DataTemplate elements is not addressable from outside —
+                                     code-behind walks the tree by name to locate GroupHeaderRow. -->
+                                <Grid
+                                    x:Name="GroupHeaderRow"
+                                    ColumnSpacing="8"
+                                    Margin="0,0,0,2"
+                                    Visibility="Collapsed">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*"    />
+                                    </Grid.ColumnDefinitions>
 
-                                        <!-- Label -->
+                                    <!-- Provider title — caption style so it reads as a section divider,
+                                         not a competing headline with the gauge hero values. -->
+                                    <TextBlock
+                                        Grid.Column="0"
+                                        Text="{x:Bind Title}"
+                                        Style="{StaticResource CaptionTextBlockStyle}"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        FontWeight="SemiBold"
+                                        VerticalAlignment="Center"
+                                        CharacterSpacing="40" />
+
+                                    <!-- Per-group health pill — invisible on "ok"; amber/blue/red pill
+                                         with human-readable label ("Degraded"/"Sign in"/"Error")
+                                         otherwise. Background color set in code-behind (ApplyHealthPillToContainer).
+                                         AutomationProperties.Name also set in code-behind to the label text. -->
+                                    <Border
+                                        x:Name="GroupHealthPill"
+                                        Grid.Column="1"
+                                        CornerRadius="20"
+                                        Padding="7,2,7,2"
+                                        VerticalAlignment="Center"
+                                        Visibility="Collapsed">
                                         <TextBlock
-                                            Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2"
-                                            Text="{x:Bind Label, Mode=OneWay}"
+                                            x:Name="GroupHealthText"
                                             Style="{StaticResource CaptionTextBlockStyle}"
-                                            Foreground="#FFF5F5F5"
-                                            Opacity="0.85"
-                                            TextTrimming="CharacterEllipsis" />
-
-                                        <!-- Hero % value -->
-                                        <TextBlock
-                                            Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2"
-                                            Text="{x:Bind ValueText, Mode=OneWay}"
-                                            Foreground="#FFF5F5F5"
-                                            FontSize="40"
-                                            FontWeight="SemiBold" />
-
-                                        <!-- Used / limit -->
-                                        <TextBlock
-                                            Grid.Row="3" Grid.Column="0"
-                                            Text="{x:Bind LimitLabel, Mode=OneWay}"
-                                            Style="{StaticResource CaptionTextBlockStyle}"
-                                            Foreground="#FFF5F5F5"
-                                            Opacity="0.8" />
-
-                                        <!-- Reset countdown -->
-                                        <TextBlock
-                                            Grid.Row="3" Grid.Column="1"
-                                            x:Name="CountdownText"
-                                            Style="{StaticResource CaptionTextBlockStyle}"
-                                            Foreground="#FFF5F5F5"
-                                            Opacity="0.8"
-                                            TextAlignment="Right" />
-                                    </Grid>
+                                            FontSize="11"
+                                            FontWeight="SemiBold"
+                                            Foreground="#FFFFFFFF" />
+                                    </Border>
                                 </Grid>
-                            </Border>
+
+                                <!-- INNER ItemsRepeater: UniformGridLayout with MinItemWidth="160".
+                                     This is the load-bearing MinItemWidth that keeps items-per-line
+                                     above 0 (Gotcha 1). The x:Name "GaugeLayout_N" is NOT used here
+                                     because DataTemplate elements can't be named from outside.
+                                     Code-behind tracks inner layouts via a List<UniformGridLayout>
+                                     populated from GroupRepeater_ElementPrepared. -->
+                                <ItemsRepeater
+                                    x:Name="InnerGaugeRepeater"
+                                    ItemsSource="{x:Bind Gauges}"
+                                    AutomationProperties.Name="{x:Bind Title}">
+                                    <ItemsRepeater.Layout>
+                                        <!--
+                                            GOTCHA 1 — div-by-zero guard: keep MinItemWidth="160"
+                                            here. The outer StackLayout never divides; this inner
+                                            UniformGridLayout does, but the window min-size
+                                            (Ui/WindowMinSize.cs, 280 DIP effective) keeps
+                                            content width > 160 at all interactive sizes.
+                                            See summaries/2026-06-17-uniformgridlayout-divbyzero-on-resize.md
+                                        -->
+                                        <UniformGridLayout
+                                            x:Name="InnerGaugeLayout"
+                                            MaximumRowsOrColumns="1"
+                                            MinItemWidth="160"
+                                            MinItemHeight="176"
+                                            ItemsStretch="Fill"
+                                            MinRowSpacing="16"
+                                            MinColumnSpacing="16" />
+                                    </ItemsRepeater.Layout>
+                                    <ItemsRepeater.ItemTemplate>
+                                        <DataTemplate x:DataType="viewmodels:GaugeViewModel">
+                                            <!--
+                                                GOTCHA 2 — x:Bind gauge-value channel:
+                                                Value, IsEstimate, ValueText, LimitLabel ALL ride
+                                                x:Bind on the SAME channel as Label. ElementPrepared
+                                                must NEVER push these imperatively — doing so creates
+                                                a second channel that desyncs under container recycling.
+                                                See summaries/2026-06-18-gauge-value-label-desync-itemsrepeater-recycling.md
+                                            -->
+                                            <Border
+                                                CornerRadius="12"
+                                                Background="#FF1C1C1E"
+                                                BorderBrush="#26FFFFFF"
+                                                BorderThickness="1"
+                                                MinHeight="120"
+                                                AutomationProperties.Name="{x:Bind Label, Mode=OneWay}">
+                                                <Grid>
+                                                    <!-- Layer 0: the bar. Value/estimate ride the same
+                                                         x:Bind channel as the label so they cannot desync
+                                                         from it under ItemsRepeater recycling. The x:Name
+                                                         remains so ApplyTheme can paint Fill/Glow brushes. -->
+                                                    <controls:GaugeControl
+                                                        x:Name="GaugeBar"
+                                                        Value="{x:Bind BarValue, Mode=OneWay}"
+                                                        IsEstimate="{x:Bind IsEstimate, Mode=OneWay}" />
+
+                                                    <!-- Overlay text (white) sits directly on the bar. -->
+                                                    <Grid Padding="20,14">
+                                                        <Grid.RowDefinitions>
+                                                            <RowDefinition Height="Auto" />
+                                                            <RowDefinition Height="*"    />
+                                                            <RowDefinition Height="Auto" />
+                                                            <RowDefinition Height="Auto" />
+                                                        </Grid.RowDefinitions>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*"    />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+
+                                                        <!-- Label -->
+                                                        <TextBlock
+                                                            Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2"
+                                                            Text="{x:Bind Label, Mode=OneWay}"
+                                                            Style="{StaticResource CaptionTextBlockStyle}"
+                                                            Foreground="#FFF5F5F5"
+                                                            Opacity="0.85"
+                                                            TextTrimming="CharacterEllipsis" />
+
+                                                        <!-- Hero % value (x:Bind — same channel as Label).
+                                                             TextWrapping="Wrap" is required: when Utilization is null,
+                                                             ValueText is the UsedLabel string verbatim (e.g. "local estimate"
+                                                             — 18 chars), which overflows the card at minimum width (160 DIP)
+                                                             without wrapping. A percent string ("87%") never wraps. -->
+                                                        <TextBlock
+                                                            Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2"
+                                                            Text="{x:Bind ValueText, Mode=OneWay}"
+                                                            Foreground="#FFF5F5F5"
+                                                            FontSize="40"
+                                                            FontWeight="SemiBold"
+                                                            TextWrapping="Wrap" />
+
+                                                        <!-- Used / limit + estimate badge (x:Bind — same channel as Label).
+                                                             When IsEstimate is true, LimitLabel is typically empty
+                                                             (Gemini has no server limit data) and the "~ local estimate"
+                                                             badge clarifies that the value is approximate. Both ride the
+                                                             same x:Bind channel as Label so they can't desync (Gotcha 2). -->
+                                                        <StackPanel
+                                                            Grid.Row="3" Grid.Column="0"
+                                                            Orientation="Horizontal"
+                                                            Spacing="6"
+                                                            VerticalAlignment="Center">
+                                                            <TextBlock
+                                                                Text="{x:Bind LimitLabel, Mode=OneWay}"
+                                                                Style="{StaticResource CaptionTextBlockStyle}"
+                                                                Foreground="#FFF5F5F5"
+                                                                Opacity="0.8" />
+                                                            <!-- Estimate badge: visible when IsEstimate=true.
+                                                                 Signals approximate data; must not be mistaken
+                                                                 for server-truth (Gemini local estimate path). -->
+                                                            <Border
+                                                                Visibility="{x:Bind IsEstimate, Mode=OneWay, Converter={StaticResource BoolToVisibility}}"
+                                                                Background="#33FFFFFF"
+                                                                CornerRadius="4"
+                                                                Padding="5,1"
+                                                                VerticalAlignment="Center"
+                                                                AutomationProperties.Name="Local estimate — values are approximate">
+                                                                <TextBlock
+                                                                    Text="~ est."
+                                                                    FontSize="10"
+                                                                    FontWeight="SemiBold"
+                                                                    Foreground="#CCF5F5F5"
+                                                                    CharacterSpacing="40" />
+                                                            </Border>
+                                                        </StackPanel>
+
+                                                        <!-- Reset countdown — imperative (time-relative),
+                                                             but driven by an index-mapped lookup
+                                                             (inner repeater index → group gauge[index])
+                                                             so it cannot desync the way old value-push did. -->
+                                                        <TextBlock
+                                                            Grid.Row="3" Grid.Column="1"
+                                                            x:Name="CountdownText"
+                                                            Style="{StaticResource CaptionTextBlockStyle}"
+                                                            Foreground="#FFF5F5F5"
+                                                            Opacity="0.8"
+                                                            TextAlignment="Right" />
+                                                    </Grid>
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsRepeater.ItemTemplate>
+                                </ItemsRepeater>
+
+                            </StackPanel>
                         </DataTemplate>
                     </ItemsRepeater.ItemTemplate>
                 </ItemsRepeater>
+
+                <!-- ============================================================
+                     Empty-state — shown when there are no gauges across ALL groups
+                     and no other banner already explains why (not needs-signin).
+                     Toggled by DashboardPage.UpdateEmptyState().
+                ============================================================ -->
+                <StackPanel
+                    x:Name="EmptyState"
+                    Visibility="Collapsed"
+                    Spacing="8"
+                    Padding="24,48"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    AutomationProperties.Name="No usage limits to display">
+                    <FontIcon
+                        Glyph="&#xE9D9;"
+                        FontFamily="Segoe Fluent Icons"
+                        FontSize="32"
+                        HorizontalAlignment="Center"
+                        Opacity="0.55" />
+                    <TextBlock
+                        Text="No usage limits to display"
+                        Style="{StaticResource SubtitleTextBlockStyle}"
+                        HorizontalAlignment="Center"
+                        TextAlignment="Center" />
+                    <TextBlock
+                        Text="Claude didn't report any usage limits for your plan. Click Refresh to try again."
+                        Style="{StaticResource BodyTextBlockStyle}"
+                        Opacity="0.7"
+                        HorizontalAlignment="Center"
+                        TextAlignment="Center"
+                        TextWrapping="Wrap"
+                        MaxWidth="320" />
+                </StackPanel>
 
             </StackPanel>
         </ScrollViewer>

@@ -90,14 +90,15 @@ public sealed partial class MainWindow : Window
         IUsageClient client,
         FileThemeStore fileThemeStore,
         ILaunchOnLogin launchOnLogin,
-        DemoModeController demoController)
+        DemoModeController demoController,
+        IProviderStore providerStore)
     {
         // Navigate the frame to the dashboard and inject dependencies.
         RootFrame.Navigate(typeof(DashboardPage));
         if (RootFrame.Content is DashboardPage page)
         {
             page.SetViewModel(vm, themeService);
-            page.SetSettingsDependencies(client, fileThemeStore, launchOnLogin, demoController);
+            page.SetSettingsDependencies(client, fileThemeStore, launchOnLogin, demoController, providerStore);
             page.SetWindow(this);
         }
     }

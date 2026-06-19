@@ -1,9 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using Fluentometer.Logic.Capture;
 using Fluentometer.Logic.Ipc;
+using Fluentometer.Logic.Settings;
 using Fluentometer.Logic.Store;
 using Fluentometer.Logic.Theming;
 using Fluentometer.Logic.ViewModels;
@@ -95,14 +97,47 @@ public partial class App : Application
         // Build in-process client (replaces sidecar + named pipe):
         //   HttpClient Timeout = 30 s — OauthUsageClient relies on this.
         //   TLS is always verified — no custom ServerCertificateCustomValidationCallback.
+        //
+        // ProviderRegistry runs detectors → builds live IReadOnlyList<IUsageProvider>.
+        // Phase 1: Claude-only. Phase 2 adds Gemini alongside Claude.
         // ------------------------------------------------------------------
         var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
-        var provider = new ClaudeProvider(
+
+        // ClaudeProvider factory: captured here so ProviderRegistry can construct it
+        // on demand after detection, with the shared HttpClient already configured.
+        IUsageProvider MakeClaudeProvider() => new ClaudeProvider(
             "https://api.anthropic.com",
             new ClaudeCredentialReader(),
             new OauthUsageClient(http),
             new JsonlReader());
-        IUsageClient client = new LiveUsageClient(provider, new SnapshotCache());
+
+        // ChatGptProvider factory: shares the same HttpClient instance as ClaudeProvider.
+        IUsageProvider MakeChatGptProvider() => new ChatGptProvider(
+            new CodexCredentialReader(),
+            new WhamUsageClient(http));
+
+        var providerStore = new FileProviderStore();
+        var registry = new ProviderRegistry(
+            providerStore,
+            MakeClaudeProvider,
+            MakeChatGptProvider,
+            new ClaudeProviderDetector(),
+            new ChatGptProviderDetector(),
+            new GeminiProviderDetector());
+
+        // BuildProvidersAsync runs detectors synchronously (tiny file reads) off the
+        // UI thread via Task.Run in step 4 below. Block here is acceptable: we need
+        // the provider list before creating LiveUsageClient for DI registration.
+        // Detection is bounded (G-10) and fast (~1 ms).
+        IReadOnlyList<IUsageProvider> providers =
+            registry.BuildProvidersAsync().GetAwaiter().GetResult();
+
+        // Fallback: if no providers detected (e.g. fresh machine), use Claude provider
+        // anyway — it will emit needs-signin health until the user signs in.
+        if (providers.Count == 0)
+            providers = [MakeClaudeProvider()];
+
+        IUsageClient client = new LiveUsageClient(providers, new SnapshotCache());
 
         _services = new ServiceCollection()
             .AddSingleton<IUsageClient>(_ => client)
@@ -125,7 +160,9 @@ public partial class App : Application
             vm, client, () => DateTimeOffset.UtcNow.ToUnixTimeSeconds());
         var demoController = new DemoModeController(demoDriver);
 
-        _window.InjectDependencies(vm, themeService, client, themeStore, launchOnLogin, demoController);
+        // providerStore was constructed above for ProviderRegistry; thread it to the
+        // Settings page so the "Monitored services" section can read/write it.
+        _window.InjectDependencies(vm, themeService, client, themeStore, launchOnLogin, demoController, providerStore);
 
         // ------------------------------------------------------------------
         // 4. Start the in-process client on a background task.

@@ -46,8 +46,8 @@ public class SnapshotCacheTests
             var cache = new SnapshotCache(dir);
             var snap = MakeSnapshot();
 
-            cache.SaveLast(snap);
-            var loaded = cache.LoadLast();
+            cache.SaveLast("claude", snap);
+            var loaded = cache.LoadLast("claude");
 
             // UsageSnapshot is a record; IReadOnlyList<Gauge> is compared by reference,
             // so assert field-by-field rather than whole-object equality.
@@ -69,7 +69,7 @@ public class SnapshotCacheTests
         try
         {
             var cache = new SnapshotCache(dir);
-            var result = cache.LoadLast();
+            var result = cache.LoadLast("claude");
             Assert.Null(result);
         }
         finally { Directory.Delete(dir, recursive: true); }
@@ -90,10 +90,10 @@ public class SnapshotCacheTests
             Assert.False(Directory.Exists(dir));
 
             var cache = new SnapshotCache(dir);
-            cache.SaveLast(MakeSnapshot());
+            cache.SaveLast("claude", MakeSnapshot());
 
             Assert.True(Directory.Exists(dir));
-            Assert.True(File.Exists(Path.Combine(dir, "last-snapshot.json")));
+            Assert.True(File.Exists(Path.Combine(dir, "last-snapshot-claude.json")));
         }
         finally
         {
@@ -113,10 +113,10 @@ public class SnapshotCacheTests
             var first = MakeSnapshot() with { Plan = "Pro" };
             var second = MakeSnapshot() with { Plan = "Max" };
 
-            cache.SaveLast(first);
-            cache.SaveLast(second);
+            cache.SaveLast("claude", first);
+            cache.SaveLast("claude", second);
 
-            var loaded = cache.LoadLast();
+            var loaded = cache.LoadLast("claude");
             Assert.NotNull(loaded);
             Assert.Equal("Max", loaded!.Plan);
         }
@@ -140,8 +140,8 @@ public class SnapshotCacheTests
                 LimitLabel: "estimate");
             var snap = MakeSnapshot(new List<Gauge> { gauge });
 
-            cache.SaveLast(snap);
-            var loaded = cache.LoadLast();
+            cache.SaveLast("claude", snap);
+            var loaded = cache.LoadLast("claude");
 
             Assert.NotNull(loaded);
             Assert.Single(loaded!.Gauges);
@@ -166,8 +166,8 @@ public class SnapshotCacheTests
             };
             var snap = MakeSnapshot(gauges);
 
-            cache.SaveLast(snap);
-            var loaded = cache.LoadLast();
+            cache.SaveLast("claude", snap);
+            var loaded = cache.LoadLast("claude");
 
             Assert.NotNull(loaded);
             Assert.Equal(3, loaded!.Gauges.Count);
@@ -184,10 +184,10 @@ public class SnapshotCacheTests
         var dir = CreateTempDir();
         try
         {
-            File.WriteAllText(Path.Combine(dir, "last-snapshot.json"), "not valid json{{{");
+            File.WriteAllText(Path.Combine(dir, "last-snapshot-claude.json"), "not valid json{{{");
             var cache = new SnapshotCache(dir);
 
-            var result = cache.LoadLast();
+            var result = cache.LoadLast("claude");
 
             Assert.Null(result);
         }
@@ -200,12 +200,48 @@ public class SnapshotCacheTests
         var dir = CreateTempDir();
         try
         {
-            File.WriteAllText(Path.Combine(dir, "last-snapshot.json"), "");
+            File.WriteAllText(Path.Combine(dir, "last-snapshot-claude.json"), "");
             var cache = new SnapshotCache(dir);
 
-            var result = cache.LoadLast();
+            var result = cache.LoadLast("claude");
 
             Assert.Null(result);
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    [Fact]
+    public void SaveLast_DifferentProviders_StoreIndependently()
+    {
+        var dir = CreateTempDir();
+        try
+        {
+            var cache = new SnapshotCache(dir);
+            var claudeSnap = MakeSnapshot() with { Provider = "claude", Plan = "Max" };
+            var geminiSnap = new UsageSnapshot(
+                Provider: "gemini",
+                CapturedAt: 1_750_000_001L,
+                Source: "local",
+                Health: "ok",
+                Plan: "Gemini (Personal)",
+                Gauges: Array.Empty<Gauge>());
+
+            cache.SaveLast("claude", claudeSnap);
+            cache.SaveLast("gemini", geminiSnap);
+
+            var loadedClaude = cache.LoadLast("claude");
+            var loadedGemini = cache.LoadLast("gemini");
+
+            Assert.NotNull(loadedClaude);
+            Assert.NotNull(loadedGemini);
+            Assert.Equal("Max", loadedClaude!.Plan);
+            Assert.Equal("Gemini (Personal)", loadedGemini!.Plan);
+            Assert.Equal("jsonl", loadedClaude.Source);  // MakeSnapshot() uses "jsonl"
+            Assert.Equal("local", loadedGemini.Source);
+
+            // Separate files on disk
+            Assert.True(File.Exists(Path.Combine(dir, "last-snapshot-claude.json")));
+            Assert.True(File.Exists(Path.Combine(dir, "last-snapshot-gemini.json")));
         }
         finally { Directory.Delete(dir, recursive: true); }
     }

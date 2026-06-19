@@ -86,9 +86,7 @@
     This guard catches the failure at build time rather than at runtime.
   -->
   <Target Name="CheckResourcesPriExists" AfterTargets="Build">
-    <Error
-      Condition="!Exists('$(OutDir)resources.pri')"
-      Text="resources.pri was not generated in $(OutDir). WinUI 3 requires resources.pri at runtime — set EnablePriGenTooling=false and EnableMsixTooling=true so the NuGet-based Msix pipeline generates it. See Fluentometer.csproj for details." />
+    <Error Condition="!Exists('$(OutDir)resources.pri')" Text="resources.pri was not generated in $(OutDir). WinUI 3 requires resources.pri at runtime — set EnablePriGenTooling=false and EnableMsixTooling=true so the NuGet-based Msix pipeline generates it. See Fluentometer.csproj for details." />
   </Target>
 
   <!--
@@ -113,13 +111,10 @@
     See: https://github.com/microsoft/microsoft-ui-xaml/discussions/8389
          https://github.com/microsoft/WindowsAppSDK/issues/4288
   -->
-  <Target Name="StripWinAppSdkLocaleFoldersFromPublish"
-          Condition="'$(WindowsPackageType)' == 'None'"
-          AfterTargets="Publish">
+  <Target Name="StripWinAppSdkLocaleFoldersFromPublish" Condition="'$(WindowsPackageType)' == 'None'" AfterTargets="Publish">
     <ItemGroup>
       <!-- Collect all .mui files NOT in en-us -->
-      <_LocaleMuiToRemove Include="$(PublishDir)*\*.mui"
-                          Exclude="$(PublishDir)en-us\*.mui" />
+      <_LocaleMuiToRemove Include="$(PublishDir)*\*.mui" Exclude="$(PublishDir)en-us\*.mui" />
       <!-- Derive the parent directories (one per locale folder) -->
       <_LocaleDirsToRemove Include="@(_LocaleMuiToRemove->'%(RootDir)%(Directory)')" />
     </ItemGroup>
@@ -133,12 +128,8 @@
     (e.g. WinAppSDK moving resources.pri into a locale subdir) fails the build
     rather than producing a broken zip.
   -->
-  <Target Name="CheckResourcesPriAfterLocaleStrip"
-          Condition="'$(WindowsPackageType)' == 'None'"
-          AfterTargets="StripWinAppSdkLocaleFoldersFromPublish">
-    <Error
-      Condition="!Exists('$(PublishDir)resources.pri')"
-      Text="resources.pri is missing from $(PublishDir) after locale folder stripping. Do NOT strip the root of PublishDir — only xx-YY subdirectories. See StripWinAppSdkLocaleFoldersFromPublish in Fluentometer.csproj." />
+  <Target Name="CheckResourcesPriAfterLocaleStrip" Condition="'$(WindowsPackageType)' == 'None'" AfterTargets="StripWinAppSdkLocaleFoldersFromPublish">
+    <Error Condition="!Exists('$(PublishDir)resources.pri')" Text="resources.pri is missing from $(PublishDir) after locale folder stripping. Do NOT strip the root of PublishDir — only xx-YY subdirectories. See StripWinAppSdkLocaleFoldersFromPublish in Fluentometer.csproj." />
   </Target>
 
 </Project>

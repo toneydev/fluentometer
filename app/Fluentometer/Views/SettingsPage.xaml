@@ -5,11 +5,11 @@
     Background="Transparent">
 
     <!--
-        SettingsPage — theme picker, launch-on-login, poll interval.
+        SettingsPage — theme picker, launch-on-login, poll interval, monitored services.
 
         All data is wired in code-behind via Initialize() because the types
-        (ThemeCatalog, AppSettings) live in Fluentometer.Logic, which avoids
-        any compiled-binding dependency on WinUI types in the logic library.
+        (ThemeCatalog, AppSettings, IProviderStore) live in Fluentometer.Logic,
+        which avoids any compiled-binding dependency on WinUI types in the logic library.
     -->
 
     <ScrollViewer
@@ -61,8 +61,6 @@
                     Style="{StaticResource CaptionTextBlockStyle}"
                     Opacity="0.7" />
 
-                <!-- Swatch grid is populated from code-behind (BuildThemeGallery).
-                     A named, always-present Grid avoids relying on .Parent before load. -->
                 <Grid x:Name="ThemeGalleryHost" />
             </StackPanel>
 
@@ -125,13 +123,6 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
 
-                    <!--
-                        Padding insets the track from the control's own bounds. The default
-                        Slider template applies Padding as Margin on its root grid, so the
-                        thumb's outer halo (a 22px Border with Margin="-2", plus the focus
-                        visual) no longer overflows the left/right edge at the Min/Max
-                        positions, where it was being clipped. See screenshot bug 2026-06-18.
-                    -->
                     <Slider
                         Grid.Column="0"
                         x:Name="PollIntervalSlider"
@@ -151,6 +142,48 @@
                         TextAlignment="Right"
                         Style="{StaticResource CaptionTextBlockStyle}" />
                 </Grid>
+            </StackPanel>
+
+            <!-- ============================================================
+                 Monitored services — populated from code-behind (SetupMonitoredServices).
+                 Host is a named StackPanel that code-behind fills with per-provider rows.
+                 TeachingTip is anchored to MonitoredServicesHeader for first-detection
+                 notifications; its title/subtitle content is set in code-behind.
+            ============================================================ -->
+            <StackPanel
+                x:Name="MonitoredServicesSection"
+                Spacing="8">
+
+                <TextBlock
+                    x:Name="MonitoredServicesHeader"
+                    Text="Monitored services"
+                    Style="{StaticResource BodyStrongTextBlockStyle}"
+                    Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+
+                <TextBlock
+                    Text="Choose which services appear on your dashboard."
+                    Style="{StaticResource CaptionTextBlockStyle}"
+                    Opacity="0.7" />
+
+                <!-- Per-provider rows appended by code-behind (SetupMonitoredServices).
+                     When no extra providers are detected, code-behind appends a
+                     friendly "nothing extra detected" message. Restart hint is shown
+                     only when extra providers exist (also appended in code-behind). -->
+                <StackPanel
+                    x:Name="MonitoredServicesHost"
+                    Spacing="12" />
+
+                <!-- First-detection TeachingTip anchored to MonitoredServicesHeader.
+                     Target is set in code-behind; title/subtitle set per detected provider.
+                     PreferredPlacement=Bottom keeps it near the section, not the window edge.
+                     IsLightDismissEnabled keeps it unobtrusive — user can ignore it. -->
+                <TeachingTip
+                    x:Name="NewProviderTeachingTip"
+                    PreferredPlacement="Bottom"
+                    IsLightDismissEnabled="True"
+                    CloseButtonContent="Got it"
+                    AutomationProperties.Name="New service detected" />
+
             </StackPanel>
 
             <!-- ============================================================

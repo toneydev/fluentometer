@@ -23,6 +23,9 @@ internal sealed class FakeUsageProvider : IUsageProvider
             Array.Empty<Gauge>());
     }
 
+    public string ProviderId => _snapshot.Provider;
+    public TimeSpan MinPollInterval => TimeSpan.FromSeconds(180);
+
     public Task<UsageSnapshot> SnapshotAsync(long nowUnix, CancellationToken ct)
     {
         CallCount++;
@@ -32,13 +35,38 @@ internal sealed class FakeUsageProvider : IUsageProvider
 
 internal sealed class FakeSnapshotCache : ISnapshotCache
 {
-    public UsageSnapshot? Stored { get; private set; }
-    private readonly UsageSnapshot? _preloaded;
+    // Keyed by providerId so tests can inspect per-provider caching.
+    private readonly Dictionary<string, UsageSnapshot> _stored = new();
+    private readonly Dictionary<string, UsageSnapshot> _preloaded;
 
-    public FakeSnapshotCache(UsageSnapshot? preloaded = null) => _preloaded = preloaded;
+    public FakeSnapshotCache(UsageSnapshot? preloaded = null)
+    {
+        _preloaded = preloaded is not null
+            ? new Dictionary<string, UsageSnapshot> { [preloaded.Provider] = preloaded }
+            : [];
+    }
 
-    public UsageSnapshot? LoadLast() => _preloaded;
-    public void SaveLast(UsageSnapshot snapshot) => Stored = snapshot;
+    /// <summary>
+    /// Returns the last snapshot saved for <paramref name="providerId"/>.
+    /// Use <see cref="GetStored(string)"/> in multi-provider tests.
+    /// </summary>
+    public UsageSnapshot? Stored
+    {
+        get
+        {
+            foreach (var v in _stored.Values) return v; // first value
+            return null;
+        }
+    }
+
+    public UsageSnapshot? GetStored(string providerId) =>
+        _stored.TryGetValue(providerId, out var s) ? s : null;
+
+    public UsageSnapshot? LoadLast(string providerId) =>
+        _preloaded.TryGetValue(providerId, out var s) ? s : null;
+
+    public void SaveLast(string providerId, UsageSnapshot snapshot) =>
+        _stored[providerId] = snapshot;
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────────

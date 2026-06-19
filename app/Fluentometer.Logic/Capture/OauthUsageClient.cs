@@ -167,11 +167,13 @@ public sealed class OauthUsageClient : IOauthUsageClient
         if (parsed is null)
             return new UsageResult.Failed("Empty or null response body");
 
+        // Every limits[] entry becomes a gauge — including groups we don't recognize.
+        // A new limit type Anthropic ships later (a new tier, a monthly cap, an
+        // Opus-scoped weekly) shows up automatically with a readable fallback label
+        // rather than being silently dropped. See BuildLabel's default case.
         var gauges = new List<Gauge>(parsed.Limits.Count);
         foreach (var limit in parsed.Limits)
         {
-            if (limit.Group != "session" && limit.Group != "weekly")
-                continue;
             gauges.Add(LimitToGauge(limit));
         }
 
@@ -213,7 +215,8 @@ public sealed class OauthUsageClient : IOauthUsageClient
     ///   <item><c>group == "weekly"</c>, no scope → "Claude Weekly"</item>
     ///   <item><c>group == "weekly"</c>, scope with display_name → "Claude Weekly ({name})"</item>
     ///   <item><c>group == "weekly"</c>, scope without display_name → "Claude Weekly (scoped)"</item>
-    ///   <item>any other group → kind</item>
+    ///   <item>any other group → humanized kind, e.g. "monthly_opus" → "Claude Monthly Opus"
+    ///         (with " ({name})" appended when the entry is model-scoped)</item>
     /// </list>
     /// </summary>
     private static string BuildLabel(LimitEntry limit)
@@ -232,8 +235,26 @@ public sealed class OauthUsageClient : IOauthUsageClient
                 return limit.Scope is not null ? "Claude Weekly (scoped)" : "Claude Weekly";
 
             default:
-                return limit.Kind;
+                // Unknown group: humanize the kind and provider-prefix it so a future
+                // limit type is still readable. Append the scoped model name if present.
+                var label = $"Claude {Humanize(limit.Kind)}";
+                var scopedName = limit.Scope?.Model?.DisplayName;
+                return scopedName is not null ? $"{label} ({scopedName})" : label;
         }
+    }
+
+    /// <summary>
+    /// Turn a snake_case kind into Title Case words: "monthly_opus" → "Monthly Opus".
+    /// </summary>
+    private static string Humanize(string kind)
+    {
+        var words = kind.Split('_', StringSplitOptions.RemoveEmptyEntries);
+        for (var i = 0; i < words.Length; i++)
+        {
+            var w = words[i];
+            words[i] = char.ToUpperInvariant(w[0]) + w[1..];
+        }
+        return string.Join(' ', words);
     }
 
     /// <summary>
