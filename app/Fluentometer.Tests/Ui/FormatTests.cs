@@ -19,6 +19,41 @@ public class FormatTests
     public void CountdownPastIsResetsNow() =>
         Assert.Equal("resets now", Format.ResetCountdown(500, 1000));
 
+    // --- Compact countdown (Mini card, beside the label) ---
+
+    [Fact]
+    public void ShortCountdownFormatsHoursAndMinutes()
+    {
+        var now = 1_000_000L;
+        var resets = now + (2 * 3600) + (14 * 60);
+        Assert.Equal("2h 14m", Format.ResetCountdownShort(resets, now));
+    }
+
+    [Fact]
+    public void ShortCountdownFormatsMinutesOnly()
+    {
+        var now = 1_000_000L;
+        var resets = now + (5 * 60);
+        Assert.Equal("5m", Format.ResetCountdownShort(resets, now));
+    }
+
+    [Fact]
+    public void ShortCountdownFormatsSecondsOnly()
+    {
+        var now = 1_000_000L;
+        var resets = now + 47;
+        Assert.Equal("47s", Format.ResetCountdownShort(resets, now));
+    }
+
+    [Fact]
+    public void ShortCountdownNullIsDash() => Assert.Equal("—", Format.ResetCountdownShort(null, 0));
+
+    [Fact]
+    public void ShortCountdownPastIsNow() => Assert.Equal("now", Format.ResetCountdownShort(500, 1000));
+
+    [Fact]
+    public void ShortCountdownExactZeroIsNow() => Assert.Equal("now", Format.ResetCountdownShort(1000, 1000));
+
     [Fact]
     public void PercentPrefersUtilization() =>
         Assert.Equal("42%", Format.PercentOrEstimate(0.42, "ignored"));

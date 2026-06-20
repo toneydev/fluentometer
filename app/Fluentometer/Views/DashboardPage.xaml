@@ -305,15 +305,42 @@
                                                             <ColumnDefinition Width="Auto" />
                                                         </Grid.ColumnDefinitions>
 
-                                                        <!-- Label -->
-                                                        <TextBlock
-                                                            x:Name="GaugeLabelText"
-                                                            Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2"
-                                                            Text="{x:Bind Label, Mode=OneWay}"
-                                                            Style="{StaticResource CaptionTextBlockStyle}"
-                                                            Foreground="#FFF5F5F5"
-                                                            Opacity="0.85"
-                                                            TextTrimming="CharacterEllipsis" />
+                                                        <!-- Label row + Mini-only reset countdown.
+                                                             A nested Grid (col0 *, col1 Auto) keeps the label's
+                                                             CharacterEllipsis trimming — a horizontal StackPanel
+                                                             would hand the label infinite width and defeat it.
+                                                             MiniCountdownText is collapsed at Comfortable/Compact
+                                                             (there the countdown lives under the value on row 3,
+                                                             CountdownText). At Mini that detail row is gone, so the
+                                                             countdown rides here beside the label. Both placements
+                                                             are uniform across every card (density-driven), so this
+                                                             stays in the SAFE imperative bucket (Gotcha 2): only
+                                                             Visibility/placement change, never the value channel. -->
+                                                        <Grid
+                                                            x:Name="LabelRow"
+                                                            Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*"    />
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock
+                                                                x:Name="GaugeLabelText"
+                                                                Grid.Column="0"
+                                                                Text="{x:Bind Label, Mode=OneWay}"
+                                                                Style="{StaticResource CaptionTextBlockStyle}"
+                                                                Foreground="#FFF5F5F5"
+                                                                Opacity="0.85"
+                                                                TextTrimming="CharacterEllipsis" />
+                                                            <TextBlock
+                                                                x:Name="MiniCountdownText"
+                                                                Grid.Column="1"
+                                                                Margin="6,0,18,0"
+                                                                Visibility="Collapsed"
+                                                                Style="{StaticResource CaptionTextBlockStyle}"
+                                                                Foreground="#FFF5F5F5"
+                                                                Opacity="0.8"
+                                                                VerticalAlignment="Center" />
+                                                        </Grid>
 
                                                         <!-- Hero % value (x:Bind — same channel as Label).
                                                              TextWrapping="Wrap" is required: when Utilization is null,

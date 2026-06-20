@@ -408,10 +408,15 @@ public sealed partial class DashboardPage : Page
             ApplyValuePlacement(value, m.MiniInline);
         }
 
-        // Mini lets the value sit in column 1 of row 0, so the label must give up its
-        // second column span; Comfortable/Compact keep the full-width label.
-        if (FindNamedChild<TextBlock>(panel, "GaugeLabelText") is { } label)
-            Grid.SetColumnSpan(label, m.MiniInline ? 1 : 2);
+        // Mini lets the value sit in column 1 of row 0, so the label row must give up
+        // its second column span; Comfortable/Compact keep the full-width label row.
+        if (FindNamedChild<Grid>(panel, "LabelRow") is { } labelRow)
+            Grid.SetColumnSpan(labelRow, m.MiniInline ? 1 : 2);
+
+        // The reset countdown rides beside the label only at Mini, where the row-3
+        // detail/countdown row is collapsed. Uniform across cards → SAFE (Gotcha 2).
+        if (FindNamedChild<TextBlock>(panel, "MiniCountdownText") is { } miniCountdown)
+            miniCountdown.Visibility = m.MiniInline ? Visibility.Visible : Visibility.Collapsed;
 
         // Mini hides the used/limit + estimate-badge row (the track bar's hatch still
         // signals the estimate state).
@@ -429,6 +434,12 @@ public sealed partial class DashboardPage : Page
     /// the Text. In inline mode the value is right-aligned and ellipsised so a long local-estimate
     /// string (e.g. "~1.2M tokens", when Utilization is null) degrades gracefully instead of
     /// overflowing the 160px card.
+    ///
+    /// Inline mode also reserves a fixed <see cref="MiniValueSlotWidth"/> slot (right-aligned
+    /// text) so a 1-, 2- or 3-digit percentage ("9%" → "45%" → "100%") all occupy the same
+    /// width — otherwise the auto-sized value column grows with its content and shifts the
+    /// reset countdown (which sits to its left) sideways. A long local-estimate string can
+    /// still grow past the slot (MinWidth, not Width); the countdown only shifts for those.
     /// </summary>
     private static void ApplyValuePlacement(TextBlock value, bool inline)
     {
@@ -441,6 +452,8 @@ public sealed partial class DashboardPage : Page
             value.VerticalAlignment = VerticalAlignment.Bottom;
             value.TextWrapping = TextWrapping.NoWrap;
             value.TextTrimming = TextTrimming.CharacterEllipsis;
+            value.MinWidth = MiniValueSlotWidth;
+            value.TextAlignment = TextAlignment.Right;
         }
         else
         {
@@ -451,8 +464,16 @@ public sealed partial class DashboardPage : Page
             value.VerticalAlignment = VerticalAlignment.Stretch;
             value.TextWrapping = TextWrapping.Wrap;
             value.TextTrimming = TextTrimming.None;
+            value.MinWidth = 0;
+            value.TextAlignment = TextAlignment.Left;
         }
     }
+
+    /// <summary>
+    /// Fixed slot reserved for the Mini hero value so 1-3 digit percentages don't shift the
+    /// reset countdown beside them. Sized to comfortably fit "100%" at the Mini value font.
+    /// </summary>
+    private const double MiniValueSlotWidth = 48;
 
     private DensityMetrics CurrentDensityMetrics()
         => DensityCatalog.For(_densityService?.Current ?? GaugeDensity.Comfortable);
@@ -655,12 +676,15 @@ public sealed partial class DashboardPage : Page
 
     private void RefreshCountdownOnGrid(Grid grid, GaugeViewModel gauge)
     {
-        var countdown = FindNamedChild<TextBlock>(grid, "CountdownText");
-        if (countdown is not null)
-        {
-            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        // Comfortable/Compact: full "resets in 2h 14m" under the value (row 3).
+        if (FindNamedChild<TextBlock>(grid, "CountdownText") is { } countdown)
             countdown.Text = Format.ResetCountdown(gauge.ResetsAt, now);
-        }
+
+        // Mini: compact "2h 14m" beside the label (no room for the prefix in a 160px card).
+        if (FindNamedChild<TextBlock>(grid, "MiniCountdownText") is { } miniCountdown)
+            miniCountdown.Text = Format.ResetCountdownShort(gauge.ResetsAt, now);
     }
 
     private void RefreshCountdowns()
