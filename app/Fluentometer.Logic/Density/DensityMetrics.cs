@@ -13,4 +13,6 @@ public sealed record DensityMetrics(
     double PadTop,
     double PadRight,
     double PadBottom,
-    bool ShowCountdown);
+    bool ShowCountdown,
+    GaugeBarLayout BarLayout,
+    bool MiniInline);

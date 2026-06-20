@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Media;
+using Fluentometer.Logic.Density;
 using Fluentometer.Logic.Ui;
 
 namespace Fluentometer.Controls;
@@ -23,9 +24,13 @@ public sealed partial class GaugeControl : Control
     /// <summary>Fixed width (px) of the leading-edge glow bloom; matches PART_Glow's Width in XAML.</summary>
     private const double GlowWidth = 140.0;
 
+    /// <summary>Height (px) of the slim fill/glow band in Track mode.</summary>
+    private const double TrackBandHeight = 5.0;
+
     private Visual? _fillClipVisual;
     private InsetClip? _fillClip;
     private Visual? _glowVisual;
+    private InsetClip? _glowClip;
 
     /// <summary>Progress value in the range [0, 1].</summary>
     public static readonly DependencyProperty ValueProperty =
@@ -74,6 +79,22 @@ public sealed partial class GaugeControl : Control
         set => SetValue(IsEstimateProperty, value);
     }
 
+    /// <summary>
+    /// Selects the bar treatment: <see cref="GaugeBarLayout.Wipe"/> fills the whole card
+    /// (the signature look), <see cref="GaugeBarLayout.Track"/> confines the same gradient
+    /// wipe + glow to a slim band at the card's bottom edge. Set uniformly by the dashboard
+    /// density pass — never per gauge value (Gotcha 2).
+    /// </summary>
+    public static readonly DependencyProperty BarLayoutProperty =
+        DependencyProperty.Register(nameof(BarLayout), typeof(GaugeBarLayout), typeof(GaugeControl),
+            new PropertyMetadata(GaugeBarLayout.Wipe, OnBarLayoutChanged));
+
+    public GaugeBarLayout BarLayout
+    {
+        get => (GaugeBarLayout)GetValue(BarLayoutProperty);
+        set => SetValue(BarLayoutProperty, value);
+    }
+
     public GaugeControl()
     {
         DefaultStyleKey = typeof(GaugeControl);
@@ -95,6 +116,8 @@ public sealed partial class GaugeControl : Control
         if (GetTemplateChild(GlowPartName) is FrameworkElement glow)
         {
             _glowVisual = ElementCompositionPreview.GetElementVisual(glow);
+            _glowClip = _glowVisual.Compositor.CreateInsetClip();
+            _glowVisual.Clip = _glowClip;
         }
 
         UpdateFill(animate: false);
@@ -107,9 +130,14 @@ public sealed partial class GaugeControl : Control
     private static void OnIsEstimateChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         => ((GaugeControl)d).UpdateEstimateState();
 
+    private static void OnBarLayoutChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        => ((GaugeControl)d).UpdateFill(animate: false);
+
     /// <summary>
     /// Reveals the fixed full-width gradient up to Value by animating the fill container's
     /// InsetClip.RightInset, and slides the leading-edge glow band to the reveal tip via Offset.X.
+    /// In Track mode the same fill + glow are confined to a slim bottom band via the clips'
+    /// TopInset — the horizontal reveal (RightInset) and glow Offset.X are reused unchanged.
     /// </summary>
     private void UpdateFill(bool animate)
     {
@@ -121,6 +149,15 @@ public sealed partial class GaugeControl : Control
         var rightInset = (float)GaugeMath.RightInset(Value, width);
         var glowX = (float)GaugeMath.GlowOffsetX(Value, width, GlowWidth);
         var glowOpacity = GaugeMath.Fraction(Value) > 0.0 ? 1f : 0f;
+
+        // Track mode: clip the fill + glow down to a slim band pinned to the bottom edge.
+        // Snap (not animated) — it follows the card height, not the value.
+        var topInset = BarLayout == GaugeBarLayout.Track
+            ? (float)Math.Max(0.0, ActualHeight - TrackBandHeight)
+            : 0f;
+        _fillClip.TopInset = topInset;
+        if (_glowClip is not null)
+            _glowClip.TopInset = topInset;
 
         var compositor = _fillClipVisual.Compositor;
 

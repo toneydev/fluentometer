@@ -69,7 +69,8 @@ Open Settings from the dashboard (gear icon):
   gauge with its own brand gradient; switch live.
 - **Gradient direction** — choose whether each bar's gradient runs bright→deep or deep→bright.
 - **Density** — choose how much space each usage card takes: **Comfortable**, **Compact**, or
-  **Mini**. Compact and Mini fit more providers on screen at once; switch live.
+  **Mini**. Mini condenses each card to a single row with a slim usage bar, fitting many more
+  providers on screen at once; switch live.
 - **Startup** — optionally launch Fluentometer when you log in.
 - **Poll interval** — how often to check for updated usage (slider, **3-minute minimum**).
 - **Monitored services** — every supported provider (Claude, ChatGPT, Gemini) is listed equally;

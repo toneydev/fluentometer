@@ -6,36 +6,42 @@ namespace Fluentometer.Tests.Density;
 public sealed class DensityCatalogTests
 {
     [Fact]
-    public void Comfortable_matches_current_baseline()
+    public void Comfortable_is_scaled_up_compact()
     {
         var m = DensityCatalog.For(GaugeDensity.Comfortable);
-        Assert.Equal(176, m.ItemMinHeight);
-        Assert.Equal(120, m.CardMinHeight);
-        Assert.Equal(40, m.ValueFontSize);
+        Assert.Equal(144, m.ItemMinHeight);
+        Assert.Equal(116, m.CardMinHeight);
+        Assert.Equal(34, m.ValueFontSize);
         Assert.Equal((20, 14, 20, 14), (m.PadLeft, m.PadTop, m.PadRight, m.PadBottom));
         Assert.True(m.ShowCountdown);
+        Assert.Equal(GaugeBarLayout.Wipe, m.BarLayout);
+        Assert.False(m.MiniInline);
     }
 
     [Fact]
-    public void Compact_shrinks_but_keeps_countdown()
+    public void Compact_keeps_countdown_and_wipe()
     {
         var m = DensityCatalog.For(GaugeDensity.Compact);
-        Assert.Equal(120, m.ItemMinHeight);
-        Assert.Equal(96, m.CardMinHeight);
-        Assert.Equal(28, m.ValueFontSize);
-        Assert.Equal((16, 12, 16, 12), (m.PadLeft, m.PadTop, m.PadRight, m.PadBottom));
-        Assert.True(m.ShowCountdown);
-    }
-
-    [Fact]
-    public void Mini_hides_countdown()
-    {
-        var m = DensityCatalog.For(GaugeDensity.Mini);
         Assert.Equal(84, m.ItemMinHeight);
         Assert.Equal(72, m.CardMinHeight);
         Assert.Equal(22, m.ValueFontSize);
         Assert.Equal((12, 10, 12, 10), (m.PadLeft, m.PadTop, m.PadRight, m.PadBottom));
+        Assert.True(m.ShowCountdown);
+        Assert.Equal(GaugeBarLayout.Wipe, m.BarLayout);
+        Assert.False(m.MiniInline);
+    }
+
+    [Fact]
+    public void Mini_uses_track_bar_inline_and_hides_countdown()
+    {
+        var m = DensityCatalog.For(GaugeDensity.Mini);
+        Assert.Equal(44, m.ItemMinHeight);
+        Assert.Equal(40, m.CardMinHeight);
+        Assert.Equal(17, m.ValueFontSize);
+        Assert.Equal((12, 8, 12, 8), (m.PadLeft, m.PadTop, m.PadRight, m.PadBottom));
         Assert.False(m.ShowCountdown);
+        Assert.Equal(GaugeBarLayout.Track, m.BarLayout);
+        Assert.True(m.MiniInline);
     }
 
     [Theory]

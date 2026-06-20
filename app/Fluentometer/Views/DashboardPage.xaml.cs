@@ -398,11 +398,60 @@ public sealed partial class DashboardPage : Page
         if (FindNamedChild<Grid>(panel, "CardContentGrid") is { } grid)
             grid.Padding = new Thickness(m.PadLeft, m.PadTop, m.PadRight, m.PadBottom);
 
+        // Bar treatment: full-card wipe (Comfortable/Compact) vs slim track band (Mini).
+        if (FindNamedChild<GaugeControl>(panel, "GaugeBar") is { } bar)
+            bar.BarLayout = m.BarLayout;
+
         if (FindNamedChild<TextBlock>(panel, "HeroValueText") is { } value)
+        {
             value.FontSize = m.ValueFontSize;
+            ApplyValuePlacement(value, m.MiniInline);
+        }
+
+        // Mini lets the value sit in column 1 of row 0, so the label must give up its
+        // second column span; Comfortable/Compact keep the full-width label.
+        if (FindNamedChild<TextBlock>(panel, "GaugeLabelText") is { } label)
+            Grid.SetColumnSpan(label, m.MiniInline ? 1 : 2);
+
+        // Mini hides the used/limit + estimate-badge row (the track bar's hatch still
+        // signals the estimate state).
+        if (FindNamedChild<StackPanel>(panel, "DetailRow") is { } detail)
+            detail.Visibility = m.MiniInline ? Visibility.Collapsed : Visibility.Visible;
 
         if (FindNamedChild<TextBlock>(panel, "CountdownText") is { } countdown)
             countdown.Visibility = m.ShowCountdown ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// Places the hero value inline beside the label (Mini) or back on its own stacked row
+    /// (Comfortable/Compact). Uniform across every card, so it cannot desync the x:Bind value
+    /// channel (Gotcha 2) — only Grid position, alignment, wrapping and trimming change; never
+    /// the Text. In inline mode the value is right-aligned and ellipsised so a long local-estimate
+    /// string (e.g. "~1.2M tokens", when Utilization is null) degrades gracefully instead of
+    /// overflowing the 160px card.
+    /// </summary>
+    private static void ApplyValuePlacement(TextBlock value, bool inline)
+    {
+        if (inline)
+        {
+            Grid.SetRow(value, 0);
+            Grid.SetColumn(value, 1);
+            Grid.SetColumnSpan(value, 1);
+            value.HorizontalAlignment = HorizontalAlignment.Right;
+            value.VerticalAlignment = VerticalAlignment.Bottom;
+            value.TextWrapping = TextWrapping.NoWrap;
+            value.TextTrimming = TextTrimming.CharacterEllipsis;
+        }
+        else
+        {
+            Grid.SetRow(value, 2);
+            Grid.SetColumn(value, 0);
+            Grid.SetColumnSpan(value, 2);
+            value.HorizontalAlignment = HorizontalAlignment.Stretch;
+            value.VerticalAlignment = VerticalAlignment.Stretch;
+            value.TextWrapping = TextWrapping.Wrap;
+            value.TextTrimming = TextTrimming.None;
+        }
     }
 
     private DensityMetrics CurrentDensityMetrics()

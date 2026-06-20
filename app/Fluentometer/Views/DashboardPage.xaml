@@ -307,6 +307,7 @@
 
                                                         <!-- Label -->
                                                         <TextBlock
+                                                            x:Name="GaugeLabelText"
                                                             Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2"
                                                             Text="{x:Bind Label, Mode=OneWay}"
                                                             Style="{StaticResource CaptionTextBlockStyle}"
@@ -334,6 +335,7 @@
                                                              badge clarifies that the value is approximate. Both ride the
                                                              same x:Bind channel as Label so they can't desync (Gotcha 2). -->
                                                         <StackPanel
+                                                            x:Name="DetailRow"
                                                             Grid.Row="3" Grid.Column="0"
                                                             Orientation="Horizontal"
                                                             Spacing="6"
