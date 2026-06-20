@@ -8,9 +8,9 @@ C# metrics engine** that runs in-process and **auto-detects** which AI tools you
   <img src="assets/demo.gif" alt="Fluentometer dashboard showing live Claude, ChatGPT, and Gemini usage gauges" width="266">
 </p>
 
-> **Providers:** **Claude** and **ChatGPT** show authoritative server-side usage; **Gemini** shows a
-> local estimate (no consumer usage API exists for it). Each provider appears automatically when its
-> CLI is signed in. Ships **unsigned** (first-run SmartScreen → "More info" → "Run anyway").
+> **Providers:** **Claude**, **ChatGPT**, and **Gemini** all show authoritative server-side usage,
+> read from each tool's own signed-in CLI session. Each provider appears automatically when its CLI is
+> signed in. Ships **unsigned** (first-run SmartScreen → "More info" → "Run anyway").
 
 ## Download
 
@@ -41,7 +41,7 @@ copied.** All network calls go over OS-verified **TLS** to the provider's own ho
 |----------|-----------|--------------|----------------|
 | **Claude** | Authoritative Anthropic `/api/oauth/usage` (the data behind Claude Code's `/usage`) | Claude Code's OAuth token in `~/.claude` | Falls back to local Claude Code session logs (`~/.claude/projects/**/*.jsonl`), clearly labelled as an estimate |
 | **ChatGPT** | Authoritative usage from OpenAI's Codex backend, reusing your Codex session | OpenAI Codex CLI credential in `~/.codex` (honors `CODEX_HOME`); only when signed in with a ChatGPT subscription, not an API key | Shows a degraded state (no local fallback exists) |
-| **Gemini** | **Local estimate only** — no consumer usage endpoint exists; always shown with a "~ est." badge so it's never mistaken for server truth | Gemini CLI credential in `~/.gemini` | — |
+| **Gemini** | Authoritative quota from Google's Code Assist backend (the data behind Gemini CLI's `/usage`), reusing your Gemini CLI session | Gemini CLI OAuth credential in `~/.gemini`; only when signed in with a Google account, not an API key or Vertex AI | Shows a degraded state (no local fallback exists) |
 
 Polling is rate-limited to **no more than once every ~3 minutes** per provider (configurable floor),
 with automatic back-off on rate limits.
@@ -58,14 +58,15 @@ The dashboard adapts to each provider's health:
 - **Sign in** — if you're not signed into a detected tool, a friendly prompt replaces its data
   instead of showing zeros.
 - **Degraded** — when authoritative data is briefly unavailable, Claude shows a labelled local
-  estimate; ChatGPT shows a degraded card (it has no local fallback).
+  estimate; ChatGPT and Gemini show a degraded card (they have no local fallback).
 - **Refresh** — a manual refresh button requests a fresh snapshot on demand.
 
 ## Settings
 
 Open Settings from the dashboard (gear icon):
 
-- **Theme** — 8 rich gradient palettes with complementary accent bars; switch live.
+- **Theme** — 9 rich gradient palettes, including a **Brand colors** mode that tints each provider's
+  gauge with its own brand gradient; switch live.
 - **Gradient direction** — choose whether each bar's gradient runs bright→deep or deep→bright.
 - **Startup** — optionally launch Fluentometer when you log in.
 - **Poll interval** — how often to check for updated usage (slider, **3-minute minimum**).

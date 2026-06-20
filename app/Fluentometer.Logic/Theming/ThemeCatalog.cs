@@ -5,6 +5,14 @@ namespace Fluentometer.Logic.Theming;
 
 public static class ThemeCatalog
 {
+    /// <summary>
+    /// Sentinel theme ID. When the active theme is this, the dashboard paints each
+    /// provider's bar from <see cref="BrandPalette"/> (per-provider) instead of from
+    /// this theme's own stops. This entry's own BarStops/Accent are used only for the
+    /// Settings gallery selection ring and as an inert catalog representative.
+    /// </summary>
+    public const string BrandId = "brand";
+
     // Bar gradients drawn from spice-controller's saturated palette family.
     // 4 are spice palettes verbatim; 4 are extensions in the same range.
     public static IReadOnlyList<GradientTheme> All { get; } =
@@ -25,6 +33,8 @@ public static class ThemeCatalog
             ["#94A3B8", "#64748B", "#334155"], "#CBD5E1"),   // extension (slate)
         new GradientTheme("porcelain", "Porcelain",
             ["#A5B4FC", "#818CF8", "#6366F1"], "#818CF8"),   // extension (soft indigo)
+        new GradientTheme("brand", "Brand colors",
+            ["#C15F3C", "#74AA9C", "#4796E3"], "#C15F3C"),   // sentinel — real bars come from BrandPalette
     ];
 
     // Build once at startup — O(1) lookup by ID instead of O(n) LINQ scan per call.

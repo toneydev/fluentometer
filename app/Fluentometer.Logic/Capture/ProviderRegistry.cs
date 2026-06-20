@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Fluentometer.Logic.Settings;
@@ -20,7 +18,11 @@ namespace Fluentometer.Logic.Capture;
 /// <code>
 /// var registry = new ProviderRegistry(
 ///     new FileProviderStore(),
+///     MakeClaudeProvider,
+///     MakeChatGptProvider,
+///     MakeGeminiProvider,
 ///     new ClaudeProviderDetector(),
+///     new ChatGptProviderDetector(),
 ///     new GeminiProviderDetector());
 /// var providers = await registry.BuildProvidersAsync(ct);
 /// IUsageClient client = new LiveUsageClient(providers, new SnapshotCache());
@@ -31,14 +33,6 @@ namespace Fluentometer.Logic.Capture;
 /// The registry has no opinions about the order of providers — the caller receives
 /// them in the order detectors are passed to the constructor.
 /// </para>
-///
-/// <para>
-/// For the Gemini provider the registry reads <c>selectedAuthType</c> from
-/// <c>%USERPROFILE%\.gemini\settings.json</c> a second time (after detection) to
-/// construct the <see cref="GeminiProvider"/> with the correct auth type.
-/// This is safe: the detection result is a discriminated union (G-8) and the
-/// second read only extracts <c>selectedAuthType</c> (G-2).
-/// </para>
 /// </summary>
 public sealed class ProviderRegistry
 {
@@ -48,7 +42,8 @@ public sealed class ProviderRegistry
     // Dependencies needed to construct concrete providers after detection.
     private readonly Func<IUsageProvider>? _claudeProviderFactory;
     private readonly Func<IUsageProvider>? _chatGptProviderFactory;
-    private readonly string _geminiSettingsPath;
+    private readonly Func<IUsageProvider>? _geminiProviderFactory;
+    private readonly string _geminiOauthCredsPath;
     private readonly string _codexAuthPath;
 
     /// <summary>
@@ -64,7 +59,7 @@ public sealed class ProviderRegistry
         IProviderStore store,
         Func<IUsageProvider> claudeProviderFactory,
         params IProviderDetector[] detectors)
-        : this(store, claudeProviderFactory, null, detectors)
+        : this(store, claudeProviderFactory, null, null, detectors)
     {
     }
 
@@ -85,15 +80,42 @@ public sealed class ProviderRegistry
         Func<IUsageProvider> claudeProviderFactory,
         Func<IUsageProvider>? chatGptProviderFactory,
         params IProviderDetector[] detectors)
+        : this(store, claudeProviderFactory, chatGptProviderFactory, null, detectors)
+    {
+    }
+
+    /// <summary>
+    /// Creates a <see cref="ProviderRegistry"/> with Claude, ChatGPT, and Gemini provider factories.
+    /// </summary>
+    /// <param name="store">Provider enable/disable store.</param>
+    /// <param name="claudeProviderFactory">
+    /// Factory that returns a ready-to-use <see cref="ClaudeProvider"/>.
+    /// </param>
+    /// <param name="chatGptProviderFactory">
+    /// Optional factory that returns a ready-to-use <see cref="ChatGptProvider"/>.
+    /// Pass <c>null</c> to skip the ChatGPT provider entirely.
+    /// </param>
+    /// <param name="geminiProviderFactory">
+    /// Optional factory that returns a ready-to-use <see cref="GeminiProvider"/>.
+    /// Pass <c>null</c> to skip the Gemini provider entirely.
+    /// </param>
+    /// <param name="detectors">All provider detectors, in priority order.</param>
+    public ProviderRegistry(
+        IProviderStore store,
+        Func<IUsageProvider> claudeProviderFactory,
+        Func<IUsageProvider>? chatGptProviderFactory,
+        Func<IUsageProvider>? geminiProviderFactory,
+        params IProviderDetector[] detectors)
     {
         _store = store;
         _claudeProviderFactory = claudeProviderFactory;
         _chatGptProviderFactory = chatGptProviderFactory;
+        _geminiProviderFactory = geminiProviderFactory;
         _detectors = detectors;
-        _geminiSettingsPath = System.IO.Path.Combine(
+        _geminiOauthCredsPath = System.IO.Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             ".gemini",
-            "settings.json");
+            "oauth_creds.json");
         _codexAuthPath = ResolveCodexAuthPath();
     }
 
@@ -156,46 +178,36 @@ public sealed class ProviderRegistry
         };
     }
 
-    private GeminiProvider? BuildGeminiProvider()
+    private IUsageProvider? BuildGeminiProvider()
     {
-        // Re-read selectedAuthType from settings.json (G-2: only this field).
-        // Detection verified the file was present and not a reparse point, but time
-        // has passed since then — repeat the reparse-point check here to defend against
-        // a race where a symlink is swapped in after detection (defense-in-depth, G-6).
+        // Defense-in-depth (P1-B / G-6): detection probed settings.json; the provider reads
+        // oauth_creds.json. Repeat the reparse-point guard here on the credential file before
+        // the factory's reader touches it, mirroring BuildChatGptProvider.
         try
         {
-            // G-6 (defense-in-depth): single GetAttributes call collapses existence
-            // check and reparse-point check to avoid a TOCTOU race.
             FileAttributes attrs;
             try
             {
-                attrs = File.GetAttributes(_geminiSettingsPath);
+                attrs = File.GetAttributes(_geminiOauthCredsPath);
             }
             catch
             {
-                // File disappeared since detection — use generic auth type.
-                return new GeminiProvider("unknown");
+                // oauth_creds.json absent — let the factory build; the reader returns NotFound
+                // → provider emits needs-signin (honest "not signed in" state).
+                return _geminiProviderFactory?.Invoke();
             }
 
             if (attrs.HasFlag(FileAttributes.ReparsePoint))
-            {
-                // Symlink/junction appeared after detection — treat as generic.
-                return new GeminiProvider("unknown");
-            }
+                return null; // symlink/junction → skip provider
 
-            var json = File.ReadAllText(_geminiSettingsPath);
-            var settings = JsonSerializer.Deserialize(
-                json,
-                GeminiRegistryJsonContext.Default.GeminiSettingsForRegistry);
-            var authType = settings?.SelectedAuthType ?? "unknown";
-            return new GeminiProvider(authType);
+            return _geminiProviderFactory?.Invoke();
         }
         catch
         {
-            // File disappeared or parse error since detection — return a generic provider.
-            return new GeminiProvider("unknown");
+            return null;
         }
     }
+
     private IUsageProvider? BuildChatGptProvider()
     {
         // Re-read the Codex auth file path (G-2: structural presence only).
@@ -234,15 +246,3 @@ public sealed class ProviderRegistry
         }
     }
 }
-
-// ── Internal JSON shape for registry's Gemini settings read ──────────────────
-// Separate context from GeminiDetectorJsonContext to keep concerns isolated.
-
-internal sealed class GeminiSettingsForRegistry
-{
-    [JsonPropertyName("selectedAuthType")]
-    public string? SelectedAuthType { get; set; }
-}
-
-[JsonSerializable(typeof(GeminiSettingsForRegistry))]
-internal sealed partial class GeminiRegistryJsonContext : JsonSerializerContext { }

@@ -147,11 +147,14 @@ public sealed class GeminiProviderDetector : IProviderDetector
             }
 
             // The file is present — even without a selectedAuthType the CLI is installed.
-            // A non-null / non-empty selectedAuthType confirms the user has authenticated.
+            // Server-truth monitoring requires an OAuth login: only oauth-* auth types can
+            // present a Bearer token to the Code Assist backend.  api-key / vertex-ai users
+            // cannot be server-monitored, so they are reported NotFound (excluded), mirroring
+            // ChatGptProviderDetector's auth_mode=="chatgpt" gate.
             var authType = settings?.SelectedAuthType;
-            if (string.IsNullOrWhiteSpace(authType))
+            if (string.IsNullOrWhiteSpace(authType) ||
+                !authType.StartsWith("oauth", StringComparison.OrdinalIgnoreCase))
             {
-                // Settings file present but no auth type — installed but not authenticated.
                 return new ProviderDetectionResult(ProviderDetectionStatus.NotFound, null);
             }
 

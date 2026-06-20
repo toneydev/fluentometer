@@ -116,11 +116,17 @@ public partial class App : Application
             new CodexCredentialReader(),
             new WhamUsageClient(http));
 
+        // GeminiProvider factory: server-truth via the Code Assist backend; shares the HttpClient.
+        IUsageProvider MakeGeminiProvider() => new GeminiProvider(
+            new GeminiCredentialReader(),
+            new CloudCodeUsageClient(http));
+
         var providerStore = new FileProviderStore();
         var registry = new ProviderRegistry(
             providerStore,
             MakeClaudeProvider,
             MakeChatGptProvider,
+            MakeGeminiProvider,
             new ClaudeProviderDetector(),
             new ChatGptProviderDetector(),
             new GeminiProviderDetector());

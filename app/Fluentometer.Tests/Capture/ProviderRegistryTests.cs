@@ -265,4 +265,25 @@ public sealed class ProviderRegistryTests
         Assert.Single(providers);
         Assert.Equal("chatgpt", providers[0].ProviderId);
     }
+
+    // 11. Gemini detected + enabled → server-truth provider included via the injected factory.
+    [Fact]
+    public async Task BuildProviders_GeminiDetectedAndEnabled_IncludesFactoryProvider()
+    {
+        // FakeProviderStore.DefaultEnabled = true → gemini is enabled by default.
+        var store = new FakeProviderStore();
+        var sentinel = new FakeUsageProvider(new Fluentometer.Logic.Ipc.UsageSnapshot(
+            "gemini", 1_700_000_000L, "oauth", "ok", "Gemini",
+            Array.Empty<Fluentometer.Logic.Ipc.Gauge>()));
+        var registry = new ProviderRegistry(
+            store,
+            claudeProviderFactory: () => MakeFakeProvider("claude"),
+            chatGptProviderFactory: null,
+            geminiProviderFactory: () => sentinel,
+            new FakeDetector("gemini", ProviderDetectionStatus.Detected));
+
+        var providers = await registry.BuildProvidersAsync();
+
+        Assert.Contains(providers, p => ReferenceEquals(p, sentinel));
+    }
 }

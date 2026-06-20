@@ -1,184 +1,139 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Fluentometer.Logic.Capture;
+using Fluentometer.Logic.Ipc;
 using Xunit;
 
 namespace Fluentometer.Tests.Capture;
 
-/// <summary>
-/// Tests for <see cref="GeminiProvider"/> — the local-estimate-only provider.
-///
-/// GeminiProvider makes no network calls and always returns a snapshot with:
-///   Provider = "gemini"
-///   Source   = "local"
-///   Health   = "ok"
-///   Gauges   with Utilization = null (local estimate only)
-///   Labels starting with "Gemini …"
-/// </summary>
-public sealed class GeminiProviderTests
+internal sealed class FakeGeminiCredentialReader(GeminiCredentialResult result) : IGeminiCredentialReader
 {
-    private const long Now = 1_750_000_000L;
+    public GeminiCredentialResult Read() => result;
+}
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
-    private static GeminiProvider BuildProvider(string authType = "oauth-personal") =>
-        new(authType);
-
-    // ────────────────────────────────────────────────────────────────────────
-    // 1. Provider identity
-    // ────────────────────────────────────────────────────────────────────────
-
-    [Fact]
-    public void ProviderId_IsGemini()
+internal sealed class FakeCloudCodeClient(CloudCodeResult result) : ICloudCodeUsageClient
+{
+    public string? LastAccessToken { get; private set; }
+    public Task<CloudCodeResult> FetchAsync(string accessToken, CancellationToken ct)
     {
-        var provider = BuildProvider();
-        Assert.Equal("gemini", provider.ProviderId);
+        LastAccessToken = accessToken;
+        return Task.FromResult(result);
     }
+}
 
+public class GeminiProviderTests
+{
+    private const long Now = 1_700_000_000; // seconds
+    private static GeminiCredentialResult OkCred(long expiresMs) =>
+        new(GeminiCredentialStatus.Ok, new GeminiCredential(new RedactedString("tok"), expiresMs));
+
+    private static readonly IReadOnlyList<Gauge> OneGauge =
+        new[] { new Gauge("gemini_requests", "Gemini Requests", 0.24, "24%", Now + 3600, "daily limit") };
+
+    // 1. Credential present + Ok quota → ok snapshot with gauges + plan
     [Fact]
-    public void MinPollInterval_Is60Seconds()
+    public async Task Snapshot_OkCredAndQuota_ReturnsOk()
     {
-        var provider = BuildProvider();
-        Assert.Equal(TimeSpan.FromSeconds(60), provider.MinPollInterval);
-    }
-
-    // ────────────────────────────────────────────────────────────────────────
-    // 2. Snapshot: Provider field = "gemini"
-    // ────────────────────────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task SnapshotAsync_ReturnsProviderGemini()
-    {
-        var provider = BuildProvider();
+        var provider = new GeminiProvider(
+            new FakeGeminiCredentialReader(OkCred(long.MaxValue)),
+            new FakeCloudCodeClient(new CloudCodeResult.Ok(OneGauge, "Gemini (Free)")));
 
         var snap = await provider.SnapshotAsync(Now, CancellationToken.None);
 
         Assert.Equal("gemini", snap.Provider);
-    }
-
-    // ────────────────────────────────────────────────────────────────────────
-    // 3. Snapshot: Source = "local" (not oauth / jsonl / demo)
-    // ────────────────────────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task SnapshotAsync_ReturnsSourceLocal()
-    {
-        var provider = BuildProvider();
-
-        var snap = await provider.SnapshotAsync(Now, CancellationToken.None);
-
-        Assert.Equal("local", snap.Source);
-    }
-
-    // ────────────────────────────────────────────────────────────────────────
-    // 4. Snapshot: Health = "ok" (local provider is always ok)
-    // ────────────────────────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task SnapshotAsync_ReturnsHealthOk()
-    {
-        var provider = BuildProvider();
-
-        var snap = await provider.SnapshotAsync(Now, CancellationToken.None);
-
         Assert.Equal("ok", snap.Health);
+        Assert.Equal("oauth", snap.Source);
+        Assert.Equal("Gemini (Free)", snap.Plan);
+        Assert.Single(snap.Gauges);
     }
 
-    // ────────────────────────────────────────────────────────────────────────
-    // 5. Snapshot: All gauges have Utilization = null (local estimate)
-    // ────────────────────────────────────────────────────────────────────────
-
+    // 2. Missing credential → needs-signin, empty gauges
     [Fact]
-    public async Task SnapshotAsync_AllGaugesHaveNullUtilization()
+    public async Task Snapshot_NoCredential_ReturnsNeedsSignin()
     {
-        var provider = BuildProvider();
+        var provider = new GeminiProvider(
+            new FakeGeminiCredentialReader(new GeminiCredentialResult(GeminiCredentialStatus.NotFound, null)),
+            new FakeCloudCodeClient(new CloudCodeResult.Ok(OneGauge, "Gemini")));
 
         var snap = await provider.SnapshotAsync(Now, CancellationToken.None);
-
-        Assert.NotEmpty(snap.Gauges);
-        foreach (var gauge in snap.Gauges)
-        {
-            Assert.Null(gauge.Utilization);
-        }
+        Assert.Equal("needs-signin", snap.Health);
+        Assert.Empty(snap.Gauges);
     }
 
-    // ────────────────────────────────────────────────────────────────────────
-    // 6. Snapshot: Gauge labels start with "Gemini"
-    // ────────────────────────────────────────────────────────────────────────
-
+    // 3. Parse error → error
     [Fact]
-    public async Task SnapshotAsync_GaugeLabelsStartWithGemini()
+    public async Task Snapshot_ParseError_ReturnsError()
     {
-        var provider = BuildProvider();
+        var provider = new GeminiProvider(
+            new FakeGeminiCredentialReader(new GeminiCredentialResult(GeminiCredentialStatus.ParseError, null)),
+            new FakeCloudCodeClient(new CloudCodeResult.Ok(OneGauge, "Gemini")));
 
         var snap = await provider.SnapshotAsync(Now, CancellationToken.None);
-
-        Assert.NotEmpty(snap.Gauges);
-        foreach (var gauge in snap.Gauges)
-        {
-            Assert.StartsWith("Gemini", gauge.Label, StringComparison.Ordinal);
-        }
+        Assert.Equal("error", snap.Health);
+        Assert.Empty(snap.Gauges);
     }
 
-    // ────────────────────────────────────────────────────────────────────────
-    // 7. Snapshot: CapturedAt matches the nowUnix argument
-    // ────────────────────────────────────────────────────────────────────────
-
+    // 4. Expired token → needs-signin, endpoint NOT called
     [Fact]
-    public async Task SnapshotAsync_CapturedAtMatchesNowUnix()
+    public async Task Snapshot_ExpiredToken_ReturnsNeedsSignin_DoesNotCallClient()
     {
-        var provider = BuildProvider();
-        var specificNow = 1_700_123_456L;
-
-        var snap = await provider.SnapshotAsync(specificNow, CancellationToken.None);
-
-        Assert.Equal(specificNow, snap.CapturedAt);
-    }
-
-    // ────────────────────────────────────────────────────────────────────────
-    // 8. PlanFromAuthType: auth-type to plan label mapping
-    // ────────────────────────────────────────────────────────────────────────
-
-    [Theory]
-    [InlineData("oauth-personal", "Gemini (Personal)")]
-    [InlineData("oauth-workspace", "Gemini (Workspace)")]
-    [InlineData("api-key", "Gemini (API Key)")]
-    [InlineData("vertex-ai", "Gemini (Vertex AI)")]
-    [InlineData("unknown-type", "Gemini (unknown-type)")]
-    [InlineData("", "Gemini")]
-    [InlineData(null, "Gemini")]
-    public void PlanFromAuthType_MapsAuthTypeToExpectedLabel(string? authType, string expected)
-    {
-        Assert.Equal(expected, GeminiProvider.PlanFromAuthType(authType));
-    }
-
-    // ────────────────────────────────────────────────────────────────────────
-    // 9. Snapshot plan matches PlanFromAuthType(authType)
-    // ────────────────────────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task SnapshotAsync_PlanDerivedFromAuthType()
-    {
-        var provider = BuildProvider("oauth-workspace");
+        var client = new FakeCloudCodeClient(new CloudCodeResult.Ok(OneGauge, "Gemini"));
+        // expiry in the past relative to Now*1000
+        var provider = new GeminiProvider(new FakeGeminiCredentialReader(OkCred(1L)), client);
 
         var snap = await provider.SnapshotAsync(Now, CancellationToken.None);
-
-        Assert.Equal("Gemini (Workspace)", snap.Plan);
+        Assert.Equal("needs-signin", snap.Health);
+        Assert.Null(client.LastAccessToken); // never reached the client
     }
 
-    // ────────────────────────────────────────────────────────────────────────
-    // 10. SnapshotAsync never throws — returns a valid snapshot regardless
-    // ────────────────────────────────────────────────────────────────────────
-
+    // 5. Unauthorized from endpoint → needs-signin
     [Fact]
-    public async Task SnapshotAsync_NeverThrows()
+    public async Task Snapshot_Unauthorized_ReturnsNeedsSignin()
     {
-        var provider = BuildProvider("some-auth-type");
+        var provider = new GeminiProvider(
+            new FakeGeminiCredentialReader(OkCred(long.MaxValue)),
+            new FakeCloudCodeClient(new CloudCodeResult.Unauthorized()));
 
-        var ex = await Record.ExceptionAsync(
-            () => provider.SnapshotAsync(Now, CancellationToken.None));
+        var snap = await provider.SnapshotAsync(Now, CancellationToken.None);
+        Assert.Equal("needs-signin", snap.Health);
+        Assert.Empty(snap.Gauges);
+    }
 
-        Assert.Null(ex);
+    // 6. RateLimited → degraded, empty gauges (no fallback)
+    [Fact]
+    public async Task Snapshot_RateLimited_ReturnsDegradedEmpty()
+    {
+        var provider = new GeminiProvider(
+            new FakeGeminiCredentialReader(OkCred(long.MaxValue)),
+            new FakeCloudCodeClient(new CloudCodeResult.RateLimited(300)));
+
+        var snap = await provider.SnapshotAsync(Now, CancellationToken.None);
+        Assert.Equal("degraded", snap.Health);
+        Assert.Empty(snap.Gauges);
+    }
+
+    // 7. Failed → degraded, empty gauges
+    [Fact]
+    public async Task Snapshot_Failed_ReturnsDegradedEmpty()
+    {
+        var provider = new GeminiProvider(
+            new FakeGeminiCredentialReader(OkCred(long.MaxValue)),
+            new FakeCloudCodeClient(new CloudCodeResult.Failed("boom")));
+
+        var snap = await provider.SnapshotAsync(Now, CancellationToken.None);
+        Assert.Equal("degraded", snap.Health);
+        Assert.Empty(snap.Gauges);
+    }
+
+    // 8. MinPollInterval is 180s
+    [Fact]
+    public void MinPollInterval_Is180Seconds()
+    {
+        var provider = new GeminiProvider(
+            new FakeGeminiCredentialReader(OkCred(long.MaxValue)),
+            new FakeCloudCodeClient(new CloudCodeResult.Failed("x")));
+        Assert.Equal(TimeSpan.FromSeconds(180), provider.MinPollInterval);
     }
 }

@@ -51,9 +51,10 @@ public sealed partial class DashboardPage : Page
     private DemoModeController? _demoController;
     private IProviderStore? _providerStore;
 
-    // Brush cache: keyed by (themeId, GradientDirection).
-    // LinearGradientBrush is safely shareable across multiple elements in WinUI 3.
-    private readonly Dictionary<(string, GradientDirection), (LinearGradientBrush Fill, LinearGradientBrush Glow)>
+    // Keyed by (themeId, GradientDirection, providerId). providerId is "" for the 8
+    // normal themes (single shared brush, exactly as before); for the "brand" theme it
+    // carries the real provider ID so each provider gets its own cached brand brush.
+    private readonly Dictionary<(string, GradientDirection, string), (LinearGradientBrush Fill, LinearGradientBrush Glow)>
         _brushCache = new();
 
     // Track the current column count so we can apply it to newly realized inner layouts.
@@ -267,28 +268,40 @@ public sealed partial class DashboardPage : Page
             {
                 var gaugeContainer = innerRepeater.TryGetElement(gj);
                 if (gaugeContainer is null) continue;
-                ApplyThemeToPanel(gaugeContainer, theme, accentColor, direction);
+                ApplyThemeToPanel(gaugeContainer, theme, accentColor, direction, group.ProviderId);
             }
         }
     }
 
     private void ApplyThemeToPanel(
-        UIElement container, GradientTheme theme, Color accentColor, GradientDirection direction)
+        UIElement container, GradientTheme theme, Color accentColor,
+        GradientDirection direction, string providerId)
     {
         if (container is not Border panel || panel.Child is not Grid grid) return;
 
         var gauge = FindNamedChild<GaugeControl>(grid, "GaugeBar");
         if (gauge is null) return;
 
-        var (fill, glow) = GetOrBuildBrushes(theme, accentColor, direction);
+        var (fill, glow) = GetOrBuildBrushes(theme, accentColor, direction, providerId);
         gauge.Fill = fill;
         gauge.Glow = glow;
     }
 
     private (LinearGradientBrush Fill, LinearGradientBrush Glow) GetOrBuildBrushes(
-        GradientTheme theme, Color accentColor, GradientDirection direction)
+        GradientTheme theme, Color accentColor, GradientDirection direction, string providerId)
     {
-        var key = (theme.Id, direction);
+        // Brand theme: per-provider stops + accent. Normal themes: providerId is "" so the
+        // cache entry is shared across all gauges exactly as before.
+        var isBrand = theme.Id == ThemeCatalog.BrandId;
+        var stops = theme.BarStops;
+        if (isBrand)
+        {
+            var brand = BrandPalette.For(providerId);
+            stops = brand.BarStops;
+            accentColor = ColorParser.Parse(brand.Accent);
+        }
+
+        var key = (theme.Id, direction, isBrand ? providerId : "");
         if (_brushCache.TryGetValue(key, out var cached)) return cached;
 
         var fill = new LinearGradientBrush
@@ -296,7 +309,7 @@ public sealed partial class DashboardPage : Page
             StartPoint = new Windows.Foundation.Point(0, 0),
             EndPoint = new Windows.Foundation.Point(1, 2),
         };
-        foreach (var (color, offset) in GradientStops.OrderedStops(theme.BarStops, direction))
+        foreach (var (color, offset) in GradientStops.OrderedStops(stops, direction))
         {
             fill.GradientStops.Add(new GradientStop { Color = ColorParser.Parse(color), Offset = offset });
         }
@@ -372,7 +385,8 @@ public sealed partial class DashboardPage : Page
         if (_themeService is not null)
         {
             var accentColor = ColorParser.Parse(_themeService.Current.Accent);
-            ApplyThemeToPanel(panel, _themeService.Current, accentColor, _themeService.Direction);
+            var providerId = FindProviderIdForInnerRepeater(sender);
+            ApplyThemeToPanel(panel, _themeService.Current, accentColor, _themeService.Direction, providerId);
         }
 
         // Seed the countdown so it isn't blank until the next 1s tick.
@@ -621,6 +635,24 @@ public sealed partial class DashboardPage : Page
         if (root is null) return null;
         var repeater = FindNamedChild<ItemsRepeater>(root, "InnerGaugeRepeater");
         return repeater?.Layout as UniformGridLayout;
+    }
+
+    /// <summary>
+    /// Given an inner repeater, returns the ProviderId of the group that owns it,
+    /// or "" if it can't be resolved. Used so the brand theme can pick the correct
+    /// per-provider gradient when a gauge container is realized.
+    /// </summary>
+    private string FindProviderIdForInnerRepeater(ItemsRepeater innerRepeater)
+    {
+        if (_vm is null) return "";
+        for (var gi = 0; gi < _vm.Groups.Count; gi++)
+        {
+            var groupContainer = GroupRepeater.TryGetElement(gi);
+            var found = FindInnerRepeater(groupContainer);
+            if (ReferenceEquals(found, innerRepeater))
+                return _vm.Groups[gi].ProviderId;
+        }
+        return "";
     }
 
     /// <summary>

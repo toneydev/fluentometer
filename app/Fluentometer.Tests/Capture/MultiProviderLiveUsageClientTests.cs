@@ -183,12 +183,13 @@ public class MultiProviderLiveUsageClientTests
     [Fact]
     public void SetPollInterval_WithClaudeAndGemini_ClampsToMaxFloor()
     {
-        // Claude's MinPollInterval = 180s, Gemini's = 60s.
-        // The floor is max(180, 60) = 180.
+        // Claude's MinPollInterval = 180s, Gemini's = 180s (server-truth provider, conservative).
+        // The floor is max(180, 180) = 180.
         var claudeFloor = (long)Math.Ceiling(
             new FakeUsageProvider(MakeSnap("claude")).MinPollInterval.TotalSeconds);
-        var geminiFloor = (long)Math.Ceiling(
-            new GeminiProvider("oauth-personal").MinPollInterval.TotalSeconds);
+        // GeminiProvider now requires IGeminiCredentialReader + ICloudCodeUsageClient; use the
+        // known constant 180s directly (GeminiProvider.MinPollInterval is always 180s).
+        var geminiFloor = 180L;
 
         // The effective floor is the max of all providers' MinPollInterval floors,
         // also clamped by LiveUsageClient.MinIntervalSecs (180s hard floor).

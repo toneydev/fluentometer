@@ -142,20 +142,17 @@ public class DemoUsageSimulatorTests
     }
 
     [Fact]
-    public void GeminiSnapshot_GaugeHasNullUtilization()
+    public void GeminiSnapshot_GaugeHasRealUtilization_NotNull()
     {
-        // Null Utilization is what drives the estimate badge / null bar / "local estimate"
-        // label rendering in GaugeViewModel.IsEstimate / BarValue / ValueText.
-        var gemini = DemoUsageSimulator.Sample(10, Now).First(s => s.Provider == "gemini");
-        Assert.Null(gemini.Gauges[0].Utilization);
+        // Gemini is now server-truth: demo gauge shows an animated percent bar (Utilization != null).
+        var gemini = DemoUsageSimulator.Sample(15, Now).First(s => s.Provider == "gemini");
+        Assert.NotNull(gemini.Gauges[0].Utilization);
+        Assert.InRange(gemini.Gauges[0].Utilization!.Value, 0.0, 1.0);
     }
 
     [Fact]
     public void GeminiSnapshot_SourceIsDemo()
     {
-        // Source="demo" keeps provenance honest — this is synthetic data, not a real
-        // local estimate. The estimate LOOK comes from Utilization=null, not from Source.
-        // Two-axis design: Source=provenance axis, Utilization=null=render-style axis.
         var gemini = DemoUsageSimulator.Sample(10, Now).First(s => s.Provider == "gemini");
         Assert.Equal("demo", gemini.Source);
     }
@@ -172,10 +169,22 @@ public class DemoUsageSimulatorTests
     {
         var gemini = DemoUsageSimulator.Sample(10, Now).First(s => s.Provider == "gemini");
         var g = gemini.Gauges[0];
-        Assert.Equal("gemini_session", g.Id);
-        Assert.Equal("Gemini Usage", g.Label);
-        Assert.Equal("local estimate", g.UsedLabel);
-        Assert.Equal("local estimate", g.LimitLabel);
+        Assert.Equal("gemini_requests", g.Id);
+        Assert.Equal("Gemini Requests", g.Label);
+        Assert.Equal("daily limit", g.LimitLabel);
+        // UsedLabel is the formatted percent (Pct) — must be a non-empty "NN%" string,
+        // and ResetsAt is the daily reset (nowUnix + 24h) that drives the countdown.
+        Assert.False(string.IsNullOrEmpty(g.UsedLabel));
+        Assert.EndsWith("%", g.UsedLabel);
+        Assert.Equal(Now + 24 * 3600, g.ResetsAt);
+    }
+
+    [Fact]
+    public void GeminiSnapshot_AnimatesOverTime()
+    {
+        var a = DemoUsageSimulator.Sample(2, Now).First(s => s.Provider == "gemini").Gauges[0].Utilization;
+        var b = DemoUsageSimulator.Sample(5, Now).First(s => s.Provider == "gemini").Gauges[0].Utilization;
+        Assert.NotEqual(a, b);
     }
 
     // ── Claude snapshot — all existing behavior preserved byte-for-byte ─────────

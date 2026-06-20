@@ -505,15 +505,16 @@ public sealed class GeminiProviderDetectorTests : IDisposable
     [Fact]
     public async Task Detect_IgnoresSecretFieldsInSettingsJson()
     {
-        // Add sensitive-looking fields that should be completely ignored.
+        // Add sensitive-looking fields alongside an oauth-type auth so detection fires.
+        // G-2: only selectedAuthType is read; apiKey/tokens fields are completely ignored.
         var settingsPath = Path.Combine(_tempDir, "settings-with-secrets.json");
         File.WriteAllText(settingsPath,
-            """{"selectedAuthType":"api-key","apiKey":"REDACTED-API-KEY-PLACEHOLDER","tokens":{"access":"REDACTED-ACCESS"}}""");
+            """{"selectedAuthType":"oauth-personal","apiKey":"REDACTED-API-KEY-PLACEHOLDER","tokens":{"access":"REDACTED-ACCESS"}}""");
         var detector = new GeminiProviderDetector(settingsPath);
 
         var result = await detector.DetectAsync(CancellationToken.None);
 
-        // Detected because selectedAuthType = "api-key" is non-empty.
+        // Detected because selectedAuthType starts with "oauth".
         Assert.Equal(ProviderDetectionStatus.Detected, result.Status);
 
         // ProviderDetectionResult must carry no secret-shaped field.
@@ -531,6 +532,48 @@ public sealed class GeminiProviderDetectorTests : IDisposable
         var str = result.ToString();
         Assert.DoesNotContain("REDACTED-API-KEY-PLACEHOLDER", str);
         Assert.DoesNotContain("REDACTED-ACCESS", str);
+    }
+
+    // ── OAuth-type gate (server-truth requires OAuth login) ──────────────────
+
+    // oauth-personal → Detected
+    [Fact]
+    public async Task Detect_OauthPersonal_ReturnsDetected()
+    {
+        var settingsPath = Path.Combine(_tempDir, "settings-oauth-personal.json");
+        File.WriteAllText(settingsPath, """{"selectedAuthType":"oauth-personal"}""");
+        var result = await new GeminiProviderDetector(settingsPath).DetectAsync(CancellationToken.None);
+        Assert.Equal(ProviderDetectionStatus.Detected, result.Status);
+    }
+
+    // oauth-workspace → Detected (enterprise 403 is handled later at the provider)
+    [Fact]
+    public async Task Detect_OauthWorkspace_ReturnsDetected()
+    {
+        var settingsPath = Path.Combine(_tempDir, "settings-oauth-workspace.json");
+        File.WriteAllText(settingsPath, """{"selectedAuthType":"oauth-workspace"}""");
+        var result = await new GeminiProviderDetector(settingsPath).DetectAsync(CancellationToken.None);
+        Assert.Equal(ProviderDetectionStatus.Detected, result.Status);
+    }
+
+    // api-key → NotFound (cannot use OAuth Bearer against Code Assist)
+    [Fact]
+    public async Task Detect_ApiKey_ReturnsNotFound()
+    {
+        var settingsPath = Path.Combine(_tempDir, "settings-api-key.json");
+        File.WriteAllText(settingsPath, """{"selectedAuthType":"api-key"}""");
+        var result = await new GeminiProviderDetector(settingsPath).DetectAsync(CancellationToken.None);
+        Assert.Equal(ProviderDetectionStatus.NotFound, result.Status);
+    }
+
+    // vertex-ai → NotFound
+    [Fact]
+    public async Task Detect_VertexAi_ReturnsNotFound()
+    {
+        var settingsPath = Path.Combine(_tempDir, "settings-vertex-ai.json");
+        File.WriteAllText(settingsPath, """{"selectedAuthType":"vertex-ai"}""");
+        var result = await new GeminiProviderDetector(settingsPath).DetectAsync(CancellationToken.None);
+        Assert.Equal(ProviderDetectionStatus.NotFound, result.Status);
     }
 
     // ────────────────────────────────────────────────────────────────────────

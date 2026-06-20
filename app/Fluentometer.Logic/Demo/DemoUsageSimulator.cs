@@ -19,15 +19,10 @@ namespace Fluentometer.Logic.Demo;
 /// </para>
 ///
 /// <para>
-/// <b>Two-axis design for estimate rendering:</b>
-/// <list type="bullet">
-///   <item><b>Source = provenance axis.</b>  All demo snapshots carry <c>Source="demo"</c>
-///     because that is what the data IS — synthetic.  We do not lie and write <c>"local"</c>.</item>
-///   <item><b>Utilization = null = render-style axis.</b>  The Gemini gauge carries
-///     <c>Utilization = null</c>, which drives <see cref="GaugeViewModel.IsEstimate"/>,
-///     the null bar, and the "local estimate" label — giving the correct visual appearance
-///     without falsifying Source.</item>
-/// </list>
+/// All three demo providers (Claude, ChatGPT, Gemini) are now server-truth providers with
+/// animated percent gauges (<c>Utilization != null</c>).  Each is phase-shifted by 1/3 of a
+/// cycle so their bars move visually out of step with one another: Claude at phase 0,
+/// ChatGPT at 1/3 cycle, Gemini at 2/3 cycle.
 /// </para>
 ///
 /// <para>
@@ -65,7 +60,7 @@ public static class DemoUsageSimulator
 
     /// <summary>
     /// Returns one synthetic <see cref="UsageSnapshot"/> per demo-supported provider,
-    /// in order: Claude (server-truth), ChatGPT (server-truth), Gemini (local-estimate).
+    /// in order: Claude (server-truth), ChatGPT (server-truth), Gemini (server-truth).
     /// The list is deterministic — identical inputs always produce identical outputs.
     /// </summary>
     public static IReadOnlyList<UsageSnapshot> Sample(double elapsedSeconds, long nowUnix)
@@ -74,7 +69,7 @@ public static class DemoUsageSimulator
         {
             SampleClaude(elapsedSeconds, nowUnix),
             SampleChatGpt(elapsedSeconds, nowUnix),
-            SampleGemini(nowUnix),
+            SampleGemini(elapsedSeconds, nowUnix),
         };
     }
 
@@ -131,32 +126,26 @@ public static class DemoUsageSimulator
         return new UsageSnapshot("chatgpt", nowUnix, "demo", "ok", "Demo", gauges);
     }
 
-    private static UsageSnapshot SampleGemini(long nowUnix)
+    private static UsageSnapshot SampleGemini(double elapsedSeconds, long nowUnix)
     {
-        // Mirrors the real GeminiProvider gauge shape:
-        //   - Utilization = null  → estimate rendering (IsEstimate=true, null bar, "local estimate" label)
-        //   - Source = "demo"     → provenance is honest: this IS synthetic data (not "local")
-        //   - Health = "ok"       → normal operating state for demo
-        // The estimate visual comes from Utilization=null (render-style axis),
-        // NOT from Source (provenance axis). See class-level doc for the two-axis design.
+        // Server-truth now: a real animated percent gauge (Utilization != null), matching the
+        // GeminiProvider gauge shape ("Gemini Requests", daily limit). Phase-shifted by
+        // 2/3 of a cycle so its bar is visually distinct from Claude (0) and ChatGPT (1/3).
+        if (elapsedSeconds < 0) elapsedSeconds = 0;
+        var shifted = elapsedSeconds + 2.0 * CycleSeconds / 3.0;
+
+        var cycle = (int)Math.Floor(shifted / CycleSeconds);
+        var t = shifted - cycle * CycleSeconds;
+
+        var peaks = SessionPeaks[cycle % SessionPeaks.Length];
+        var daily = SessionValue(t, peaks);
+
         var gauges = new List<Gauge>
         {
-            new Gauge(
-                Id: "gemini_session",
-                Label: "Gemini Usage",
-                Utilization: null,
-                UsedLabel: "local estimate",
-                ResetsAt: null,
-                LimitLabel: "local estimate"),
+            new("gemini_requests", "Gemini Requests", daily, Pct(daily), nowUnix + 24 * 3600, "daily limit"),
         };
 
-        return new UsageSnapshot(
-            Provider: "gemini",
-            CapturedAt: nowUnix,
-            Source: "demo",
-            Health: "ok",
-            Plan: "Gemini (Personal)",
-            Gauges: gauges);
+        return new UsageSnapshot("gemini", nowUnix, "demo", "ok", "Gemini (Free)", gauges);
     }
 
     // ── Claude math helpers (unchanged) ────────────────────────────────────────

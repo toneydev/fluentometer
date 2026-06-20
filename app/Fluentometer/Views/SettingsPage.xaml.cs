@@ -134,24 +134,32 @@ public sealed partial class SettingsPage : Page
         var accentColor = ColorParser.Parse(theme.Accent);
         var isSelected = theme.Id == _themeService.Current.Id;
 
-        var barBrush = new LinearGradientBrush
+        FrameworkElement bar;
+        if (theme.Id == ThemeCatalog.BrandId)
         {
-            StartPoint = new Windows.Foundation.Point(0, 0),
-            EndPoint = new Windows.Foundation.Point(1, 0),
-        };
-        foreach (var (color, offset) in GradientStops.OrderedStops(theme.BarStops, _themeService.Direction))
-        {
-            barBrush.GradientStops.Add(new GradientStop { Color = ColorParser.Parse(color), Offset = offset });
+            bar = BuildBrandSegmentBar();
         }
-
-        var bar = new Border
+        else
         {
-            Height = 10,
-            CornerRadius = new CornerRadius(5),
-            Background = barBrush,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(8, 0, 8, 0),
-        };
+            var barBrush = new LinearGradientBrush
+            {
+                StartPoint = new Windows.Foundation.Point(0, 0),
+                EndPoint = new Windows.Foundation.Point(1, 0),
+            };
+            foreach (var (color, offset) in GradientStops.OrderedStops(theme.BarStops, _themeService.Direction))
+            {
+                barBrush.GradientStops.Add(new GradientStop { Color = ColorParser.Parse(color), Offset = offset });
+            }
+
+            bar = new Border
+            {
+                Height = 10,
+                CornerRadius = new CornerRadius(5),
+                Background = barBrush,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(8, 0, 8, 0),
+            };
+        }
 
         var label = new TextBlock
         {
@@ -190,6 +198,35 @@ public sealed partial class SettingsPage : Page
         ring.PointerPressed += (_, _) => SelectTheme(theme);
 
         return ring;
+    }
+
+    /// <summary>
+    /// Builds the brand-theme swatch bar: three side-by-side rounded segments using each
+    /// supported provider's primary brand color (Claude, ChatGPT, Gemini). Honestly shows
+    /// "each product gets its own color" rather than one blended gradient.
+    /// </summary>
+    private static Border BuildBrandSegmentBar()
+    {
+        var grid = new Grid { Height = 10, Margin = new Thickness(8, 0, 8, 0) };
+        string[] providerIds = ["claude", "chatgpt", "gemini"];
+        for (var i = 0; i < providerIds.Length; i++)
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        for (var i = 0; i < providerIds.Length; i++)
+        {
+            var primary = BrandPalette.For(providerIds[i]).Accent; // primary = glow accent
+            var seg = new Border { Background = new SolidColorBrush(ColorParser.Parse(primary)) };
+            Grid.SetColumn(seg, i);
+            grid.Children.Add(seg);
+        }
+
+        // Wrap so the row of segments has a single rounded outline (clip children to corners).
+        return new Border
+        {
+            CornerRadius = new CornerRadius(5),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = grid,
+        };
     }
 
     private void SelectTheme(GradientTheme theme)
@@ -423,12 +460,13 @@ public sealed partial class SettingsPage : Page
         if (providerId != "claude")
         {
             // Add a subtle source hint row so users understand the data source.
-            // ChatGPT uses a server API (Wham endpoint); other non-Claude providers
-            // (e.g. Gemini) use a local estimate with no API key required.
             container.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            var hintText = providerId == "chatgpt"
-                ? $"{displayName} — server data · requires Codex CLI"
-                : $"{displayName} — local estimate (no API key required)";
+            var hintText = providerId switch
+            {
+                "chatgpt" => $"{displayName} — server data · requires Codex CLI",
+                "gemini" => $"{displayName} — server data · requires Gemini CLI",
+                _ => $"{displayName} — local estimate (no API key required)",
+            };
             var hint = new TextBlock
             {
                 Text = hintText,

@@ -91,8 +91,9 @@ operating system's trusted root store. Certificate verification is never disable
 - `DangerousAcceptAnyServerCertificateValidator` is never used.
 - No certificate-pinning bypass or "accept all" shim exists in the codebase.
 
-All HTTP requests target `https://api.anthropic.com` (Claude) and, when the ChatGPT provider
-is active, `https://chatgpt.com`. Plain HTTP is never used for API calls.
+All HTTP requests target `https://api.anthropic.com` (Claude), `https://chatgpt.com` (ChatGPT,
+when the Codex credential is detected), and `https://cloudcode-pa.googleapis.com` (Gemini, when
+the Gemini CLI OAuth credential is detected). Plain HTTP is never used for API calls.
 
 ### Endpoint Transparency
 
@@ -133,6 +134,32 @@ When the ChatGPT provider is active, the capture engine additionally calls
   not see a ChatGPT gauge, because the detector gates on `auth_mode == "chatgpt"`.
 - No fallback local-estimate path exists for ChatGPT (unlike Claude's JSONL fallback). If the
   endpoint is unavailable, the gauge shows a `degraded` health state with no utilization figure.
+
+When the Gemini provider is active, the capture engine calls two RPCs on
+`https://cloudcode-pa.googleapis.com/v1internal`, reading the Gemini CLI OAuth token from
+`%USERPROFILE%\.gemini\oauth_creds.json`. TLS is always verified.
+
+**Honest disclosure for the Gemini provider (E-7):**
+
+- `cloudcode-pa.googleapis.com/v1internal:loadCodeAssist` and `:retrieveUserQuota` are internal
+  Google Code Assist endpoints with no public API contract or SLA. Google may change their shape,
+  authentication requirements, or availability without notice. The health field will surface
+  `degraded` or `error` if the endpoints become unavailable.
+- These are the same endpoints the Gemini CLI itself uses to report the current user's quota.
+  Fluentometer calls them on behalf of the same authenticated user (using their own OAuth token)
+  and displays the result only to that user. The token is never copied to another location, never
+  logged, and never transmitted to any host other than `cloudcode-pa.googleapis.com`.
+- Users who have the Gemini CLI installed but use an API key or Vertex AI authentication (not
+  OAuth login) will not see a Gemini gauge, because the detector gates on `selectedAuthType`
+  starting with `"oauth"`.
+- No fallback local-estimate path exists for the Gemini server-truth provider. If the endpoint
+  is unavailable, the gauge shows a `degraded` health state with no utilization figure.
+- **User-Agent note:** `GeminiCLI/<version>` is sent in the `User-Agent` header to match what
+  the Gemini CLI sends. The exact version string (`GeminiConstants.GeminiCliVersion`) was not
+  empirically confirmed against a live Gemini CLI traffic capture at time of writing (the CLI was
+  not installed on the development machine). The endpoint is not known to require a specific
+  version string; the value should be verified against a real Gemini CLI session before a
+  production release.
 
 ### Poll Rate
 
@@ -233,7 +260,8 @@ or `Environment.SpecialFolder.LocalApplicationData`. No `Directory.EnumerateFile
 | Path | What IS read | What is NEVER read |
 |------|-------------|-------------------|
 | `%USERPROFILE%\.claude\.credentials.json` | Structural presence of the `claudeAiOauth` JSON key only — the detector checks that the key exists, not its contents | `accessToken`, `refreshToken`, `expiresAt` — these fields are never accessed by the detector DTO; only `ClaudeCredentialReader` reads them at poll time, wrapped immediately in `RedactedString` |
-| `%USERPROFILE%\.gemini\settings.json` | `selectedAuthType` string value (e.g. `"oauth-personal"`) — used to confirm the user has authenticated and to label the gauge plan | Token fields, API key values, gcloud credential paths, or any other field in the file |
+| `%USERPROFILE%\.gemini\settings.json` | `selectedAuthType` string value (e.g. `"oauth-personal"`) — used to confirm the user has authenticated via OAuth and to label the gauge plan | Token fields, API key values, gcloud credential paths, or any other field in the file |
+| `%USERPROFILE%\.gemini\oauth_creds.json` | `access_token` (Bearer, wrapped immediately in `RedactedString`) and `expiry_date` (Unix milliseconds) — read-only at poll time by `GeminiCredentialReader` | `refresh_token`, `id_token`, `token_type`, and any other fields — these are deliberately not declared in the deserialization DTO and are never materialized |
 | `%USERPROFILE%\.codex\auth.json` (or `$CODEX_HOME\auth.json` when `CODEX_HOME` is set) | `auth_mode` string (e.g. `"chatgpt"`) and structural presence of a `tokens` block — used to confirm the user has a ChatGPT subscription session, not a bare API-key Codex session | `tokens.access_token`, `tokens.refresh_token` (JWTs) — these fields are never accessed by the detector DTO; only `CodexCredentialReader` reads them at poll time, wrapped immediately in `RedactedString`. `account_id`, `email`, `last_refresh` are also not read during detection. |
 
 The `selectedAuthType` value from `settings.json` is a non-secret configuration string (one of
@@ -259,16 +287,26 @@ documented here so reviewers can confirm the implementation stays within the sta
 | VS Code extension storage | Unstable format, not publicly documented — deferred |
 | Any other application's PasswordVault entries | **Never accessed** — Fluentometer never reads another application's DPAPI-encrypted credential store |
 
-### Gemini Provider: Local Estimate Only, No Network Call
+### Gemini Provider: Server-Truth via Code Assist Backend
 
-`GeminiProvider` (the usage-data provider activated after detection) makes **no network calls**.
-It produces a local-estimate snapshot with `Source = "local"` and `Utilization = null` on all
-gauges. There is no Gemini usage endpoint accessible to third-party clients; the gauge is present
-to confirm Gemini is active, not to report server-authoritative utilization. The `IsEstimate`
-label path in the UI communicates this clearly to the user.
+`GeminiProvider` (the usage-data provider activated after detection) reads the Gemini CLI OAuth
+token from `%USERPROFILE%\.gemini\oauth_creds.json` and calls the Google Code Assist backend
+to retrieve real quota data. It is a server-truth provider (analogous to Claude and ChatGPT):
+`Source = "oauth"` and `Utilization` is a real server-reported value.
 
-Because there is no network call, no Gemini credential value (API key, OAuth token, or gcloud
-token) is ever transmitted anywhere by this provider.
+The access token (`access_token` field from `oauth_creds.json`) is:
+
+- Wrapped immediately in `RedactedString` at the deserialization boundary — `ToString()` yields
+  `***`, and it cannot appear in logs or error messages.
+- Exposed via `.Expose()` exactly once, inline in `GeminiProvider.SnapshotAsync`, only to build
+  the `Authorization: Bearer` header. It is never stored in a field, closure, or log sink.
+- Never transmitted to any host other than `cloudcode-pa.googleapis.com`.
+
+There is no local-estimate fallback for the Gemini server-truth provider. On endpoint failure
+the provider emits a `degraded` health state with an empty gauge list. See §Endpoint Transparency
+for the full E-7 disclosure of the internal endpoint.
+
+No Gemini credential value is ever written to disk, the Windows registry, or any log sink.
 
 ### Secret-Field Ban List
 

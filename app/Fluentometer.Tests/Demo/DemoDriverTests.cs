@@ -112,26 +112,27 @@ public class DemoDriverTests
     }
 
     [Fact]
-    public void Begin_GeminiGroupHasOneGaugeWithNullUtilization()
+    public void Begin_GeminiGroupHasOneGaugeWithRealUtilization()
     {
         var (vm, _, driver) = Build();
         driver.Begin();
 
         // Gemini is now at index 2 (Claude [0], ChatGPT [1], Gemini [2]).
+        // Gemini is now server-truth: Utilization is a real animated percent (not null).
         var geminiGroup = vm.Groups[2];
         Assert.Single(geminiGroup.Gauges);
-        // Null Utilization drives estimate badge / null bar / "local estimate" label.
-        Assert.Null(geminiGroup.Gauges[0].Utilization);
+        Assert.NotNull(geminiGroup.Gauges[0].Utilization);
     }
 
     [Fact]
-    public void Begin_GeminiGaugeIsMarkedAsEstimate()
+    public void Begin_GeminiGaugeIsNotMarkedAsEstimate()
     {
         var (vm, _, driver) = Build();
         driver.Begin();
         // Gemini is now at index 2 (Claude [0], ChatGPT [1], Gemini [2]).
+        // Server-truth gauge: IsEstimate must be false (Utilization != null).
         var geminiGauge = vm.Groups[2].Gauges[0];
-        Assert.True(geminiGauge.IsEstimate);
+        Assert.False(geminiGauge.IsEstimate);
     }
 
     [Fact]
