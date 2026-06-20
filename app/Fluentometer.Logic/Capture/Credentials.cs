@@ -84,25 +84,15 @@ public sealed class ClaudeCredentialReader : IClaudeCredentialReader
     /// </summary>
     public CredentialResult Read()
     {
-        string json;
-        try
-        {
-            json = File.ReadAllText(_path);
-        }
-        catch (FileNotFoundException)
-        {
+        // P1-B / G-1 / G-6 / G-11: two-phase read (GetAttributes → ReadAllText) is
+        // delegated to the shared CredentialFileReader helper.  This closes the
+        // reparse-point/TOCTOU gap that existed when File.ReadAllText was called
+        // directly without a prior GetAttributes check.
+        var fileResult = CredentialFileReader.Read(_path);
+        if (!fileResult.IsSuccess)
             return new CredentialResult(CredentialStatus.NotFound, null);
-        }
-        catch (DirectoryNotFoundException)
-        {
-            return new CredentialResult(CredentialStatus.NotFound, null);
-        }
-        catch (Exception)
-        {
-            // Any other I/O error (permissions, etc.) — treat as NotFound so the caller
-            // can decide whether to prompt the user.
-            return new CredentialResult(CredentialStatus.NotFound, null);
-        }
+
+        var json = fileResult.Json!;
 
         try
         {

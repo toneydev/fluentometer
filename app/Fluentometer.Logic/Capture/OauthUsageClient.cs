@@ -3,12 +3,12 @@ using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
-using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Fluentometer.Logic.Ipc;
+using static Fluentometer.Logic.Capture.HttpClientHelper;
 
 namespace Fluentometer.Logic.Capture;
 
@@ -129,19 +129,6 @@ public sealed class OauthUsageClient : IOauthUsageClient
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private static long ParseRetryAfter(HttpResponseHeaders headers)
-    {
-        if (headers.TryGetValues("Retry-After", out var values))
-        {
-            foreach (var v in values)
-            {
-                if (long.TryParse(v, out var secs))
-                    return secs;
-            }
-        }
-        return 180; // default when header is absent or unparseable
-    }
-
     private static async Task<UsageResult> ParseSuccessAsync(HttpResponseMessage response, CancellationToken ct)
     {
         string body;
@@ -241,41 +228,6 @@ public sealed class OauthUsageClient : IOauthUsageClient
                 var scopedName = limit.Scope?.Model?.DisplayName;
                 return scopedName is not null ? $"{label} ({scopedName})" : label;
         }
-    }
-
-    /// <summary>
-    /// Turn a snake_case kind into Title Case words: "monthly_opus" → "Monthly Opus".
-    /// </summary>
-    private static string Humanize(string kind)
-    {
-        var words = kind.Split('_', StringSplitOptions.RemoveEmptyEntries);
-        for (var i = 0; i < words.Length; i++)
-        {
-            var w = words[i];
-            words[i] = char.ToUpperInvariant(w[0]) + w[1..];
-        }
-        return string.Join(' ', words);
-    }
-
-    /// <summary>
-    /// Parse an RFC 3339 timestamp (with optional fractional seconds and non-UTC offsets
-    /// such as <c>+00:00</c>) to a Unix timestamp in whole seconds.
-    /// Returns null if the input is null or unparseable.
-    /// </summary>
-    private static long? ParseRfc3339ToUnix(string? s)
-    {
-        if (s is null) return null;
-
-        if (DateTimeOffset.TryParse(
-            s,
-            null,
-            System.Globalization.DateTimeStyles.RoundtripKind,
-            out var dto))
-        {
-            return dto.ToUnixTimeSeconds();
-        }
-
-        return null;
     }
 }
 

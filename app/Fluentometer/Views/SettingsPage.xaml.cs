@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
 using Fluentometer; // DemoModeController
+using Fluentometer.Logic.Capture;
 using Fluentometer.Logic.Ipc;
 using Fluentometer.Logic.Settings;
 using Fluentometer.Logic.Theming;
+using Fluentometer.Logic.ViewModels;
 using Fluentometer.Ui;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
@@ -32,6 +34,7 @@ public sealed partial class SettingsPage : Page
     private ILaunchOnLogin? _launchOnLogin;
     private DemoModeController? _demoController;
     private IProviderStore? _providerStore;
+    private IReadOnlySet<string> _detectedProviderIds = new HashSet<string>();
     private AppSettings? _settings;
 
     // The grid that holds theme swatches, built in BuildThemeGallery().
@@ -65,7 +68,8 @@ public sealed partial class SettingsPage : Page
         FileThemeStore fileThemeStore,
         ILaunchOnLogin launchOnLogin,
         DemoModeController demoController,
-        IProviderStore providerStore)
+        IProviderStore providerStore,
+        IReadOnlySet<string> detectedProviderIds)
     {
         _themeService = themeService;
         _client = client;
@@ -73,6 +77,7 @@ public sealed partial class SettingsPage : Page
         _launchOnLogin = launchOnLogin;
         _demoController = demoController;
         _providerStore = providerStore;
+        _detectedProviderIds = detectedProviderIds;
 
         _settings = _fileThemeStore.LoadAppSettings();
 
@@ -141,15 +146,12 @@ public sealed partial class SettingsPage : Page
         }
         else
         {
-            var barBrush = new LinearGradientBrush
-            {
-                StartPoint = new Windows.Foundation.Point(0, 0),
-                EndPoint = new Windows.Foundation.Point(1, 0),
-            };
-            foreach (var (color, offset) in GradientStops.OrderedStops(theme.BarStops, _themeService.Direction))
-            {
-                barBrush.GradientStops.Add(new GradientStop { Color = ColorParser.Parse(color), Offset = offset });
-            }
+            // Swatch fill is the horizontal (1, 0) endpoint — distinct from the dashboard's
+            // diagonal (1, 2). See GradientBrushFactory's endpoint guardrail.
+            var barBrush = GradientBrushFactory.BuildFill(
+                theme.BarStops,
+                _themeService.Direction,
+                new Windows.Foundation.Point(1, 0));
 
             bar = new Border
             {
@@ -208,11 +210,11 @@ public sealed partial class SettingsPage : Page
     private static Border BuildBrandSegmentBar()
     {
         var grid = new Grid { Height = 10, Margin = new Thickness(8, 0, 8, 0) };
-        string[] providerIds = ["claude", "chatgpt", "gemini"];
-        for (var i = 0; i < providerIds.Length; i++)
+        var providerIds = ProviderCatalog.RecognizedIds;
+        for (var i = 0; i < providerIds.Count; i++)
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-        for (var i = 0; i < providerIds.Length; i++)
+        for (var i = 0; i < providerIds.Count; i++)
         {
             var primary = BrandPalette.For(providerIds[i]).Accent; // primary = glow accent
             var seg = new Border { Background = new SolidColorBrush(ColorParser.Parse(primary)) };
@@ -333,19 +335,15 @@ public sealed partial class SettingsPage : Page
     // -------------------------------------------------------------------------
 
     /// <summary>
-    /// Builds the "Monitored services" section. Each detected provider gets a row with a
-    /// ToggleSwitch (right-aligned via HorizontalAlignment=Stretch) plus a subtle source
-    /// hint for non-Claude providers ("Gemini — local estimate").
+    /// Builds the "Monitored services" section. ALL recognized providers
+    /// (<see cref="ProviderCatalog.RecognizedIds"/>) are listed equally, in canonical
+    /// alphabetical order — no provider is privileged. Each row is structurally
+    /// identical: a toggle plus a data-source hint; providers not detected on this
+    /// machine also get a quiet "Not detected" caption (their toggle stays interactive
+    /// so a user can pre-disable a provider they don't want).
     ///
-    /// The provider list is the set that was detected at startup by ProviderRegistry.
-    /// Toggle changes take effect on restart (LiveUsageClient is not hot-swapped), so a
-    /// quiet restart caption is shown when extra providers are present.
-    ///
-    /// When no extra providers beyond Claude are detected (the v1 steady state) a warm
-    /// "we'll show them here" message is shown instead of an empty list.
-    ///
-    /// Newly detected non-Claude providers get a TeachingTip introduction, then MarkSeen
-    /// is called to prevent re-showing.
+    /// A first-detection TeachingTip is shown for any provider detected this run that
+    /// hasn't been seen before (Claude included), then MarkSeen prevents re-showing.
     /// </summary>
     private void SetupMonitoredServices()
     {
@@ -354,84 +352,51 @@ public sealed partial class SettingsPage : Page
         MonitoredServicesHost.Children.Clear();
         _providerToggles.Clear();
 
-        // Collect the provider IDs that have been seen (i.e., detected at least once).
         var seen = _providerStore.Seen();
-        var providerIds = new List<string>(seen);
-
-        // Sort for stable display: Claude first, then others alphabetically.
-        providerIds.Sort((a, b) =>
-        {
-            if (a == "claude") return -1;
-            if (b == "claude") return 1;
-            return string.Compare(a, b, StringComparison.OrdinalIgnoreCase);
-        });
-
-        // Track which newly-detected providers need a TeachingTip.
         var newlyDetected = new List<string>();
 
-        foreach (var providerId in providerIds)
+        foreach (var providerId in ProviderCatalog.RecognizedIds)
         {
-            // Non-Claude providers detected in this session trigger the TeachingTip.
-            // (Claude is always expected; other providers are new discoveries.)
-            if (providerId != "claude")
+            var isDetected = _detectedProviderIds.Contains(providerId);
+
+            // First-detection teaching tip fires for ANY provider (Claude included)
+            // detected this run that hasn't been seen before.
+            if (isDetected && !seen.Contains(providerId))
                 newlyDetected.Add(providerId);
 
-            var row = BuildProviderRow(providerId);
+            var row = BuildProviderRow(providerId, isDetected);
             MonitoredServicesHost.Children.Add(row);
         }
 
-        // Nothing-detected friendly state: if no extra providers beyond Claude detected,
-        // show a warm informational message. Opacity 0.55 keeps it quiet — it's ambient
-        // info, not an error or a call to action.
-        if (providerIds.Count <= 1) // only Claude or nothing at all
+        // Toggle changes are applied on restart (LiveUsageClient is not hot-swapped),
+        // so a quiet restart note is always shown beneath the roster.
+        var restartNote = new TextBlock
         {
-            var friendlyMsg = new TextBlock
-            {
-                Text = "Other services will appear here automatically once Fluentometer detects them.",
-                Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"],
-                Opacity = 0.55,
-                TextWrapping = TextWrapping.Wrap,
-            };
-            MonitoredServicesHost.Children.Add(friendlyMsg);
-        }
-        else
-        {
-            // Extra providers are listed — show a quiet restart note so users aren't
-            // surprised when a toggle doesn't take effect immediately.
-            var restartNote = new TextBlock
-            {
-                Text = "Toggle changes take effect when you restart Fluentometer.",
-                Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"],
-                Opacity = 0.5,
-                TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 4, 0, 0),
-            };
-            MonitoredServicesHost.Children.Add(restartNote);
-        }
+            Text = "Toggle changes take effect when you restart Fluentometer.",
+            Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"],
+            Opacity = 0.5,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 4, 0, 0),
+        };
+        MonitoredServicesHost.Children.Add(restartNote);
 
-        // Show TeachingTip for newly detected non-Claude providers (first-detection).
-        // Anchor it to the section header so the tip points at the relevant section.
+        // Show the first-detection TeachingTip for any newly detected providers.
         // MarkSeen is called inside ShowNewProviderTeachingTip to prevent re-showing.
         NewProviderTeachingTip.Target = MonitoredServicesHeader;
         if (newlyDetected.Count > 0)
-        {
             ShowNewProviderTeachingTip(newlyDetected);
-        }
     }
 
     /// <summary>
-    /// Builds a provider row: a Grid with a ToggleSwitch (right-aligned) plus a
-    /// subtle source/estimate hint for non-Claude providers.
-    ///
-    /// Layout: single-column Grid (full width).
-    ///   Row 0: ToggleSwitch (HorizontalAlignment=Stretch puts the thumb on the right).
-    ///   Row 1: subtle hint caption ("local estimate") for non-Claude providers only.
+    /// Builds a provider row: a single-column Grid with a ToggleSwitch (thumb
+    /// right-aligned), a data-source hint caption for EVERY provider, and — when the
+    /// provider was not detected on this machine — a quiet "Not detected" caption.
+    /// The toggle stays interactive even when not detected so a user can pre-disable a
+    /// provider they don't want to monitor.
     /// </summary>
-    private Grid BuildProviderRow(string providerId)
+    private Grid BuildProviderRow(string providerId, bool isDetected)
     {
-        var displayName = providerId.Length > 0
-            ? char.ToUpperInvariant(providerId[0]) + providerId[1..]
-            : providerId;
+        var displayName = ProviderGroupViewModel.DisplayNameFor(providerId);
 
         var toggle = new ToggleSwitch
         {
@@ -441,8 +406,6 @@ public sealed partial class SettingsPage : Page
             OffContent = "Off",
             HorizontalAlignment = HorizontalAlignment.Stretch,
         };
-        // AutomationProperties is a static attached property in WinUI 3;
-        // it cannot be set via an object initializer.
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(toggle, $"Monitor {displayName}");
 
         toggle.Toggled += (_, _) =>
@@ -453,34 +416,39 @@ public sealed partial class SettingsPage : Page
 
         _providerToggles.Add((providerId, toggle));
 
-        // Wrap in a container to add the source hint for non-Claude providers.
         var container = new Grid { RowSpacing = 2 };
-        container.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-        if (providerId != "claude")
-        {
-            // Add a subtle source hint row so users understand the data source.
-            container.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            var hintText = providerId switch
-            {
-                "chatgpt" => $"{displayName} — server data · requires Codex CLI",
-                "gemini" => $"{displayName} — server data · requires Gemini CLI",
-                _ => $"{displayName} — local estimate (no API key required)",
-            };
-            var hint = new TextBlock
-            {
-                Text = hintText,
-                Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"],
-                Opacity = 0.5,
-                TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 0, 0, 0),
-            };
-            Grid.SetRow(hint, 1);
-            container.Children.Add(hint);
-        }
+        container.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // toggle
+        container.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // source hint
 
         Grid.SetRow(toggle, 0);
         container.Children.Add(toggle);
+
+        // Data-source hint for EVERY provider (Claude included).
+        var hint = new TextBlock
+        {
+            Text = ProviderCatalog.SourceHint(providerId),
+            Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"],
+            Opacity = 0.5,
+            TextWrapping = TextWrapping.Wrap,
+        };
+        Grid.SetRow(hint, 1);
+        container.Children.Add(hint);
+
+        // Quiet "not detected" caption when the provider isn't present on this machine.
+        if (!isDetected)
+        {
+            container.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            var notDetected = new TextBlock
+            {
+                Text = "Not detected on this machine",
+                Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"],
+                Opacity = 0.45,
+                TextWrapping = TextWrapping.Wrap,
+            };
+            Grid.SetRow(notDetected, 2);
+            container.Children.Add(notDetected);
+        }
+
         return container;
     }
 
@@ -496,9 +464,7 @@ public sealed partial class SettingsPage : Page
         string title, subtitle;
         if (newProviderIds.Count == 1)
         {
-            var name = newProviderIds[0].Length > 0
-                ? char.ToUpperInvariant(newProviderIds[0][0]) + newProviderIds[0][1..]
-                : newProviderIds[0];
+            var name = ProviderGroupViewModel.DisplayNameFor(newProviderIds[0]);
             title = $"{name} detected";
             subtitle = $"Fluentometer found {name} on this machine and will monitor its usage. "
                      + "You can disable it here. Changes take effect on restart.";
@@ -506,7 +472,7 @@ public sealed partial class SettingsPage : Page
         else
         {
             var names = string.Join(", ", newProviderIds.ConvertAll(id =>
-                id.Length > 0 ? char.ToUpperInvariant(id[0]) + id[1..] : id));
+                ProviderGroupViewModel.DisplayNameFor(id)));
             title = "New services detected";
             subtitle = $"Fluentometer found {names} on this machine and will monitor their usage. "
                      + "You can disable them here. Changes take effect on restart.";

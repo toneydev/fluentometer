@@ -44,4 +44,33 @@ public class ProviderGroupViewModelTests
         var vm = new ProviderGroupViewModel("chatgpt");
         Assert.Equal("chatgpt", vm.ProviderId);
     }
+
+    // -------------------------------------------------------------------------
+    // DisplayNameFor — smoke tests verifying the promoted internal static is
+    // externally accessible and returns correct brand names from call sites
+    // outside the ViewModels assembly (e.g. SettingsPage.xaml.cs).
+    // -------------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("chatgpt", "ChatGPT")]
+    [InlineData("claude", "Claude")]
+    [InlineData("gemini", "Gemini")]
+    public void DisplayNameFor_ReturnsKnownBrandName(string providerId, string expected)
+    {
+        // Verifies that DisplayNameFor is internal static and accessible from the
+        // test assembly (via InternalsVisibleTo), returning the correct brand name.
+        Assert.Equal(expected, ProviderGroupViewModel.DisplayNameFor(providerId));
+    }
+
+    [Fact]
+    public void DisplayNameFor_FallsBackToFirstCharUppercaseForUnknownProvider()
+    {
+        Assert.Equal("Perplexity", ProviderGroupViewModel.DisplayNameFor("perplexity"));
+    }
+
+    [Fact]
+    public void DisplayNameFor_EmptyStringReturnsEmpty()
+    {
+        Assert.Equal("", ProviderGroupViewModel.DisplayNameFor(""));
+    }
 }

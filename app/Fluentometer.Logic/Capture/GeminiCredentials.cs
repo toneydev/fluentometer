@@ -63,47 +63,15 @@ public sealed class GeminiCredentialReader : IGeminiCredentialReader
 
     public GeminiCredentialResult Read()
     {
-        // P1-B: reparse-point guard — check attributes before ReadAllText to prevent
-        // following symlinks/junctions to attacker-controlled paths.
-        try
-        {
-            var attrs = File.GetAttributes(_path);
-            if (attrs.HasFlag(FileAttributes.ReparsePoint))
-                return new GeminiCredentialResult(GeminiCredentialStatus.NotFound, null);
-        }
-        catch (FileNotFoundException)
-        {
+        // P1-B / G-1 / G-6 / G-11: two-phase read (GetAttributes → ReadAllText) is
+        // delegated to the shared CredentialFileReader helper.  Deserialization,
+        // field access, and RedactedString wrapping remain here so each provider's
+        // G-2 audit stays independently verifiable by reading this file.
+        var fileResult = CredentialFileReader.Read(_path);
+        if (!fileResult.IsSuccess)
             return new GeminiCredentialResult(GeminiCredentialStatus.NotFound, null);
-        }
-        catch (DirectoryNotFoundException)
-        {
-            return new GeminiCredentialResult(GeminiCredentialStatus.NotFound, null);
-        }
-        catch (Exception)
-        {
-            // Any other I/O error (permissions, etc.) — G-11: no ex.Message forwarded.
-            return new GeminiCredentialResult(GeminiCredentialStatus.NotFound, null);
-        }
 
-        // Read the file content.
-        string json;
-        try
-        {
-            json = File.ReadAllText(_path);
-        }
-        catch (FileNotFoundException)
-        {
-            return new GeminiCredentialResult(GeminiCredentialStatus.NotFound, null);
-        }
-        catch (DirectoryNotFoundException)
-        {
-            return new GeminiCredentialResult(GeminiCredentialStatus.NotFound, null);
-        }
-        catch (Exception)
-        {
-            // G-11: no ex.Message forwarded.
-            return new GeminiCredentialResult(GeminiCredentialStatus.NotFound, null);
-        }
+        var json = fileResult.Json!;
 
         // Deserialize and extract fields.
         try

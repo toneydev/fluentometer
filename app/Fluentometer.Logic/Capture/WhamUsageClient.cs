@@ -15,6 +15,7 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Fluentometer.Logic.Ipc;
+using static Fluentometer.Logic.Capture.HttpClientHelper;
 
 namespace Fluentometer.Logic.Capture;
 
@@ -145,24 +146,6 @@ public sealed class WhamUsageClient : IWhamUsageClient
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Mirror of <see cref="OauthUsageClient"/>'s ParseRetryAfter.
-    /// Tries <c>long.TryParse</c> on the <c>Retry-After</c> header;
-    /// defaults to 180 s when the header is absent or unparseable.
-    /// </summary>
-    private static long ParseRetryAfter(HttpResponseHeaders headers)
-    {
-        if (headers.TryGetValues("Retry-After", out var values))
-        {
-            foreach (var v in values)
-            {
-                if (long.TryParse(v, out var secs))
-                    return secs;
-            }
-        }
-        return 180; // default when header is absent or unparseable
-    }
 
     private static async Task<WhamResult> ParseSuccessAsync(
         HttpResponseMessage response, CancellationToken ct)

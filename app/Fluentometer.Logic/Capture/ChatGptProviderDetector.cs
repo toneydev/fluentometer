@@ -1,5 +1,4 @@
 using System;
-using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
@@ -82,58 +81,14 @@ public sealed class ChatGptProviderDetector : IProviderDetector
     {
         try
         {
-            // G-1 + G-6: obtain attributes in a single syscall rather than File.Exists
-            // followed by File.GetAttributes — that two-step sequence is a TOCTOU window
-            // where an attacker could swap a regular file for a symlink between the two
-            // calls. Using GetAttributes directly (catching FileNotFoundException when the
-            // path is absent) collapses the existence check and the reparse-point check
-            // into one atomic operation, eliminating the race.
-            FileAttributes attrs;
-            try
-            {
-                attrs = File.GetAttributes(_authPath);
-            }
-            catch (FileNotFoundException)
-            {
+            // G-1 + G-6 + G-11: two-phase read (GetAttributes → ReadAllText) delegated to
+            // CredentialFileReader.  The helper eliminates the TOCTOU race (single syscall
+            // for both existence and reparse-point check) and never forwards ex.Message.
+            var fileResult = CredentialFileReader.Read(_authPath);
+            if (!fileResult.IsSuccess)
                 return new ProviderDetectionResult(ProviderDetectionStatus.NotFound, null);
-            }
-            catch (DirectoryNotFoundException)
-            {
-                return new ProviderDetectionResult(ProviderDetectionStatus.NotFound, null);
-            }
-            catch
-            {
-                // G-11: other I/O errors (permissions, locks) → NotFound, never log message.
-                return new ProviderDetectionResult(ProviderDetectionStatus.NotFound, null);
-            }
 
-            // G-6: reparse-point (symlink/junction) check — evaluated on the same attrs
-            // retrieved above, with no additional I/O between the attribute fetch and this test.
-            if (attrs.HasFlag(FileAttributes.ReparsePoint))
-            {
-                // Symlink/junction — skip to avoid path-traversal risk.
-                return new ProviderDetectionResult(ProviderDetectionStatus.NotFound, null);
-            }
-
-            // G-1: single read — the ReadAllText call here is the only read of file content.
-            string json;
-            try
-            {
-                json = File.ReadAllText(_authPath);
-            }
-            catch (FileNotFoundException)
-            {
-                return new ProviderDetectionResult(ProviderDetectionStatus.NotFound, null);
-            }
-            catch (DirectoryNotFoundException)
-            {
-                return new ProviderDetectionResult(ProviderDetectionStatus.NotFound, null);
-            }
-            catch
-            {
-                // G-11: other I/O errors (permissions, locks) → NotFound, never log message.
-                return new ProviderDetectionResult(ProviderDetectionStatus.NotFound, null);
-            }
+            var json = fileResult.Json!;
 
             // G-2: parse only auth_mode (a non-secret config string) and the structural
             // presence of the tokens block. access_token / refresh_token / account_id must

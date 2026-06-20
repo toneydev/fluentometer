@@ -243,11 +243,14 @@ locations (G-4).
 
 ### Reparse-Point Rejection
 
-Before reading any file, each detector calls `File.GetAttributes(path)` in a single syscall that
-combines the existence check and the reparse-point check atomically. If the path carries
-`FileAttributes.ReparsePoint` (symlink or NTFS junction), the detector immediately returns
-`NotFound` without reading any file content (G-6). Using a single `GetAttributes` call eliminates
-the TOCTOU race that would exist if `File.Exists` were called first and then `GetAttributes`.
+Before reading any file, the shared `CredentialFileReader` helper
+(`app/Fluentometer.Logic/Capture/CredentialFileReader.cs`) calls `File.GetAttributes(path)` in a
+single syscall that combines the existence check and the reparse-point check atomically. If the
+path carries `FileAttributes.ReparsePoint` (symlink or NTFS junction), the helper returns a
+typed result without reading any file content (G-6). Using a single `GetAttributes` call
+eliminates the TOCTOU race that would exist if `File.Exists` were called first and then
+`GetAttributes`. All three detector classes and all three credential-reader classes delegate to
+this helper — the guard cannot be bypassed by omitting it from a new reader or detector.
 
 ### No Recursive Directory Walks
 

@@ -70,8 +70,10 @@ Open Settings from the dashboard (gear icon):
 - **Gradient direction** — choose whether each bar's gradient runs bright→deep or deep→bright.
 - **Startup** — optionally launch Fluentometer when you log in.
 - **Poll interval** — how often to check for updated usage (slider, **3-minute minimum**).
-- **Monitored services** — turn each detected provider on or off for the dashboard; newly detected
-  tools surface a one-time notification.
+- **Monitored services** — every supported provider (Claude, ChatGPT, Gemini) is listed equally;
+  turn each on or off for the dashboard. A provider not detected on your machine shows a quiet
+  "not detected" note (its toggle stays available), and newly detected tools surface a one-time
+  notification.
 - **Demonstration mode** — animate the gauges with simulated data for demos and screenshots
   (session-only; resets on restart, and renders every supported provider).
 

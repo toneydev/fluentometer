@@ -166,9 +166,16 @@ public partial class App : Application
             vm, client, () => DateTimeOffset.UtcNow.ToUnixTimeSeconds());
         var demoController = new DemoModeController(demoDriver);
 
-        // providerStore was constructed above for ProviderRegistry; thread it to the
-        // Settings page so the "Monitored services" section can read/write it.
-        _window.InjectDependencies(vm, themeService, client, themeStore, launchOnLogin, demoController, providerStore);
+        // Navigate the root frame to the dashboard and inject all dependencies from the
+        // composition root.  providerStore was constructed above for ProviderRegistry; it
+        // is threaded to the Settings page so the "Monitored services" section can read/write it.
+        _window.RootFrame.Navigate(typeof(DashboardPage));
+        if (_window.RootFrame.Content is DashboardPage page)
+        {
+            page.SetViewModel(vm, themeService);
+            page.SetSettingsDependencies(client, themeStore, launchOnLogin, demoController, providerStore, registry.DetectedProviderIds);
+            page.SetWindow(_window);
+        }
 
         // ------------------------------------------------------------------
         // 4. Start the in-process client on a background task.

@@ -67,6 +67,9 @@ public class CloudCodeUsageClientTests
     }
 
     // 2. CRITICAL — remainingFraction is REMAINING; Utilization is USED (inverted)
+    // $100-rule guard: Gemini gauge math is INVERTED vs Claude/ChatGPT.
+    // remainingFraction 0.76175 → used 0.23825 (NOT 0.76, NOT 76.175)
+    // DO NOT merge this into a cross-provider Theory — the inversion is provider-specific.
     [Fact]
     public async Task Fetch_RemainingFraction_IsInvertedToUsedUtilization()
     {
@@ -103,25 +106,20 @@ public class CloudCodeUsageClientTests
         Assert.Equal("Gemini", ok.Plan); // tier unknown → default
     }
 
-    // 5. quota 401 → Unauthorized
-    [Fact]
-    public async Task Fetch_Quota401_ReturnsUnauthorized()
+    // 5+6. quota 401 / 403 → Unauthorized
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    public async Task Fetch_Quota401Or403_ReturnsUnauthorized(HttpStatusCode status)
     {
-        var client = Build(RoutingHandler(HttpStatusCode.OK, LoadJson, HttpStatusCode.Unauthorized, ""));
-        var result = await client.FetchAsync("tok", CancellationToken.None);
-        Assert.IsType<CloudCodeResult.Unauthorized>(result);
-    }
-
-    // 6. quota 403 → Unauthorized (enterprise/IAM lockout → needs-signin)
-    [Fact]
-    public async Task Fetch_Quota403_ReturnsUnauthorized()
-    {
-        var client = Build(RoutingHandler(HttpStatusCode.OK, LoadJson, HttpStatusCode.Forbidden, ""));
+        var client = Build(RoutingHandler(HttpStatusCode.OK, LoadJson, status, ""));
         var result = await client.FetchAsync("tok", CancellationToken.None);
         Assert.IsType<CloudCodeResult.Unauthorized>(result);
     }
 
     // 7. quota 429 with Retry-After → RateLimited(parsed)
+    // HARD GUARDRAIL: this test uses the URL-routing handler (Gemini's two-RPC design)
+    // and MUST remain a separate Fact — do NOT fold into a Theory with test 8.
     [Fact]
     public async Task Fetch_Quota429_HonoursRetryAfter()
     {

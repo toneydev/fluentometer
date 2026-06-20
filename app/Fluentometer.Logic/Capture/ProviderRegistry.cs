@@ -39,6 +39,12 @@ public sealed class ProviderRegistry
     private readonly IProviderStore _store;
     private readonly IReadOnlyList<IProviderDetector> _detectors;
 
+    // Provider IDs detected during the last BuildProvidersAsync run (regardless of
+    // enabled state). Surfaced so the Settings page can render a per-provider
+    // detected / "not detected" state without re-reading credentials from the UI layer.
+    private readonly HashSet<string> _detectedProviderIds =
+        new(StringComparer.OrdinalIgnoreCase);
+
     // Dependencies needed to construct concrete providers after detection.
     private readonly Func<IUsageProvider>? _claudeProviderFactory;
     private readonly Func<IUsageProvider>? _chatGptProviderFactory;
@@ -127,6 +133,13 @@ public sealed class ProviderRegistry
     private static string ResolveCodexAuthPath() => CodexPaths.ResolveAuthPath();
 
     /// <summary>
+    /// The set of provider IDs that detection reported as
+    /// <see cref="ProviderDetectionStatus.Detected"/> during the last
+    /// <see cref="BuildProvidersAsync"/> run — independent of whether each is enabled.
+    /// </summary>
+    public IReadOnlySet<string> DetectedProviderIds => _detectedProviderIds;
+
+    /// <summary>
     /// Runs all detectors, filters to detected + enabled, and returns the provider list.
     /// Returns an empty list (not null) if nothing is detected/enabled.
     /// Never throws — detection errors are swallowed per detector (G-11).
@@ -154,6 +167,8 @@ public sealed class ProviderRegistry
             if (result.Status != ProviderDetectionStatus.Detected)
                 continue;
 
+            _detectedProviderIds.Add(detector.ProviderId);
+
             if (!_store.IsEnabled(detector.ProviderId))
                 continue;
 
@@ -172,72 +187,57 @@ public sealed class ProviderRegistry
         return providerId switch
         {
             "claude" => _claudeProviderFactory?.Invoke(),
-            "gemini" => BuildGeminiProvider(),
-            "chatgpt" => BuildChatGptProvider(),
+            "gemini" => BuildProviderWithReparseGuard(_geminiOauthCredsPath, _geminiProviderFactory),
+            "chatgpt" => BuildProviderWithReparseGuard(_codexAuthPath, _chatGptProviderFactory),
             _ => null,
         };
     }
 
-    private IUsageProvider? BuildGeminiProvider()
+    /// <summary>
+    /// Applies a P1-B / G-6 defense-in-depth reparse-point guard before invoking a
+    /// provider factory that reads a credential file at <paramref name="credPath"/>.
+    ///
+    /// <para>
+    /// Detection ran earlier but time may have passed; this single
+    /// <see cref="File.GetAttributes"/> call collapses the existence check and the
+    /// reparse-point check atomically to prevent a TOCTOU race (symlink swap after
+    /// detection). If the file is absent we still invoke the factory — the credential
+    /// reader inside the provider will return <c>NotFound</c> and the provider will
+    /// emit a <c>needs-signin</c> health value, which is the honest "not signed in"
+    /// state. If the file is a reparse point the provider is skipped entirely.
+    /// </para>
+    /// </summary>
+    /// <param name="credPath">Absolute path to the credential file to guard.</param>
+    /// <param name="factory">
+    /// Factory to invoke when the file is absent or is a regular file (not a reparse
+    /// point). Pass <c>null</c> to skip the provider unconditionally.
+    /// </param>
+    /// <returns>
+    /// The constructed <see cref="IUsageProvider"/>, or <c>null</c> if the file is a
+    /// reparse point or an unexpected error occurs.
+    /// </returns>
+    private static IUsageProvider? BuildProviderWithReparseGuard(
+        string credPath,
+        Func<IUsageProvider>? factory)
     {
-        // Defense-in-depth (P1-B / G-6): detection probed settings.json; the provider reads
-        // oauth_creds.json. Repeat the reparse-point guard here on the credential file before
-        // the factory's reader touches it, mirroring BuildChatGptProvider.
         try
         {
             FileAttributes attrs;
             try
             {
-                attrs = File.GetAttributes(_geminiOauthCredsPath);
+                attrs = File.GetAttributes(credPath);
             }
             catch
             {
-                // oauth_creds.json absent — let the factory build; the reader returns NotFound
-                // → provider emits needs-signin (honest "not signed in" state).
-                return _geminiProviderFactory?.Invoke();
+                // Credential file absent — let the factory build; the credential reader
+                // inside the provider will return NotFound → provider emits needs-signin.
+                return factory?.Invoke();
             }
 
             if (attrs.HasFlag(FileAttributes.ReparsePoint))
-                return null; // symlink/junction → skip provider
+                return null; // symlink/junction appeared after detection — skip provider
 
-            return _geminiProviderFactory?.Invoke();
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private IUsageProvider? BuildChatGptProvider()
-    {
-        // Re-read the Codex auth file path (G-2: structural presence only).
-        // Detection verified the file was not a reparse point, but time has passed —
-        // repeat the check here as defense-in-depth against a race where a symlink
-        // is swapped in after detection (P1-B, mirrors BuildGeminiProvider's pattern).
-        try
-        {
-            // P1-B (defense-in-depth): single GetAttributes call collapses existence
-            // check and reparse-point check to avoid a TOCTOU race (G-6).
-            FileAttributes attrs;
-            try
-            {
-                attrs = File.GetAttributes(_codexAuthPath);
-            }
-            catch
-            {
-                // File disappeared since detection — provider will emit needs-signin health.
-                // Fall through to factory invocation (factory handles the missing file case
-                // via CodexCredentialReader.Read() → NotFound).
-                return _chatGptProviderFactory?.Invoke();
-            }
-
-            if (attrs.HasFlag(FileAttributes.ReparsePoint))
-            {
-                // Symlink/junction appeared after detection — skip provider.
-                return null;
-            }
-
-            return _chatGptProviderFactory?.Invoke();
+            return factory?.Invoke();
         }
         catch
         {

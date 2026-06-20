@@ -67,7 +67,12 @@ public sealed partial class ProviderGroupViewModel : ObservableObject
     /// unknown providers fall back to first-character uppercasing so future providers
     /// render reasonably without a code change.
     /// </summary>
-    private static string DisplayNameFor(string providerId)
+    /// <remarks>
+    /// <c>internal static</c> so call sites in the presentation layer (e.g. SettingsPage)
+    /// can resolve provider labels through this single canonical source of truth instead of
+    /// re-deriving them with naive first-char-capitalize expressions.
+    /// </remarks>
+    internal static string DisplayNameFor(string providerId)
     {
         if (KnownDisplayNames.TryGetValue(providerId, out var name))
             return name;

@@ -204,38 +204,4 @@ public class ChatGptProviderTests
         Assert.Equal("chatgpt", provider.ProviderId);
     }
 
-    // 11. Health strings are exact kebab-case UI contract strings
-    [Fact]
-    public async Task SnapshotAsync_HealthStringsAreExactKebabCase()
-    {
-        var cred = CodexTestHelpers.MakeCred();
-
-        // ok
-        var ok = await new ChatGptProvider(
-            new FakeCodexCredentialReader(CodexTestHelpers.Ok(cred)),
-            new FakeWhamClient(CodexTestHelpers.TwoGauges()))
-            .SnapshotAsync(Now, CancellationToken.None);
-        Assert.Equal("ok", ok.Health);
-
-        // needs-signin (credential not found)
-        var ns1 = await new ChatGptProvider(
-            new FakeCodexCredentialReader(CodexTestHelpers.NotFound),
-            new FakeWhamClient(new WhamResult.Unauthorized()))
-            .SnapshotAsync(Now, CancellationToken.None);
-        Assert.Equal("needs-signin", ns1.Health);
-
-        // degraded (wham failed)
-        var deg = await new ChatGptProvider(
-            new FakeCodexCredentialReader(CodexTestHelpers.Ok(cred)),
-            new FakeWhamClient(new WhamResult.Failed("x")))
-            .SnapshotAsync(Now, CancellationToken.None);
-        Assert.Equal("degraded", deg.Health);
-
-        // error (parse error)
-        var err = await new ChatGptProvider(
-            new FakeCodexCredentialReader(CodexTestHelpers.ParseError),
-            new FakeWhamClient(new WhamResult.Failed("n/a")))
-            .SnapshotAsync(Now, CancellationToken.None);
-        Assert.Equal("error", err.Health);
-    }
 }

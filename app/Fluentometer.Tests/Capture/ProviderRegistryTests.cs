@@ -286,4 +286,39 @@ public sealed class ProviderRegistryTests
 
         Assert.Contains(providers, p => ReferenceEquals(p, sentinel));
     }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // DetectedProviderIds: detected-but-disabled is still reported as detected
+    // ────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task DetectedProviderIds_IncludesDetectedButDisabledProvider()
+    {
+        var store = new FakeProviderStore();
+        store.SetEnabled("claude", false); // detected but disabled
+
+        var registry = new ProviderRegistry(
+            store,
+            () => MakeFakeProvider("claude"),
+            new FakeDetector("claude", ProviderDetectionStatus.Detected));
+
+        var providers = await registry.BuildProvidersAsync();
+
+        Assert.Empty(providers);                                  // disabled → not built
+        Assert.Contains("claude", registry.DetectedProviderIds);  // but still detected
+    }
+
+    [Fact]
+    public async Task DetectedProviderIds_ExcludesUndetectedProvider()
+    {
+        var store = new FakeProviderStore();
+        var registry = new ProviderRegistry(
+            store,
+            () => MakeFakeProvider("claude"),
+            new FakeDetector("claude", ProviderDetectionStatus.NotFound));
+
+        await registry.BuildProvidersAsync();
+
+        Assert.DoesNotContain("claude", registry.DetectedProviderIds);
+    }
 }

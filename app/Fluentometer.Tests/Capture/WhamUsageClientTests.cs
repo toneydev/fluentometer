@@ -72,54 +72,45 @@ public class WhamUsageClientTests
         Assert.Equal("ChatGPT 5-hour", ok.Gauges[0].Label);
     }
 
-    // 4. 401 → Unauthorized
-    [Fact]
-    public async Task Fetch_401_ReturnsUnauthorized()
+    // 4+5. 401 / 403 → Unauthorized (both treated as needs-signin)
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    public async Task Fetch_401Or403_ReturnsUnauthorized(HttpStatusCode status)
     {
-        var client = Build(HttpStatusCode.Unauthorized);
+        var client = Build(status);
         var result = await client.FetchAsync(
             "https://chatgpt.com/backend-api", "tok", "acct", CancellationToken.None);
         Assert.IsType<WhamResult.Unauthorized>(result);
     }
 
-    // 5. 403 → Unauthorized (same treatment — needs-signin)
-    [Fact]
-    public async Task Fetch_403_ReturnsUnauthorized()
+    // 6+7. 429 with / without Retry-After header
+    [Theory]
+    [InlineData("300", 300L)]
+    [InlineData(null, 180L)]
+    public async Task Fetch_429_HonoursRetryAfterOrDefaults180(string? retryAfterValue, long expectedSecs)
     {
-        var client = Build(HttpStatusCode.Forbidden);
-        var result = await client.FetchAsync(
-            "https://chatgpt.com/backend-api", "tok", "acct", CancellationToken.None);
-        Assert.IsType<WhamResult.Unauthorized>(result);
-    }
-
-    // 6. 429 with Retry-After → RateLimited with parsed value
-    [Fact]
-    public async Task Fetch_429_HonoursRetryAfterHeader()
-    {
-        var handler = new FakeHttpHandler(_ =>
+        WhamUsageClient client;
+        if (retryAfterValue is not null)
         {
-            var resp = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
-            resp.Headers.Add("Retry-After", "300");
-            return resp;
-        });
-        var client = BuildWithHandler(handler);
+            var handler = new FakeHttpHandler(_ =>
+            {
+                var resp = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+                resp.Headers.Add("Retry-After", retryAfterValue);
+                return resp;
+            });
+            client = BuildWithHandler(handler);
+        }
+        else
+        {
+            client = Build(HttpStatusCode.TooManyRequests);
+        }
+
         var result = await client.FetchAsync(
             "https://chatgpt.com/backend-api", "tok", "acct", CancellationToken.None);
 
         var rl = Assert.IsType<WhamResult.RateLimited>(result);
-        Assert.Equal(300L, rl.RetryAfterSecs);
-    }
-
-    // 7. 429 without Retry-After → RateLimited defaulting to 180
-    [Fact]
-    public async Task Fetch_429_NoRetryAfterHeader_Defaults180()
-    {
-        var client = Build(HttpStatusCode.TooManyRequests);
-        var result = await client.FetchAsync(
-            "https://chatgpt.com/backend-api", "tok", "acct", CancellationToken.None);
-
-        var rl = Assert.IsType<WhamResult.RateLimited>(result);
-        Assert.Equal(180L, rl.RetryAfterSecs);
+        Assert.Equal(expectedSecs, rl.RetryAfterSecs);
     }
 
     // 8. 500 → Failed

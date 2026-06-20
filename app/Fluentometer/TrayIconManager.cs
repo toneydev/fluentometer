@@ -28,6 +28,9 @@ public sealed class TrayIconManager : IDisposable
     private readonly TaskbarIcon _trayIcon;
     private bool _disposed;
 
+    // De-dup guard: avoids calling the Win32 Shell API when the tooltip text hasn't changed.
+    private string _lastTooltipText = string.Empty;
+
     // Named handler stored as a field so it can be unsubscribed in Dispose().
     private readonly NotifyCollectionChangedEventHandler _onGaugesChanged;
 
@@ -120,6 +123,14 @@ public sealed class TrayIconManager : IDisposable
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        // Only IsConnected and Health affect the tooltip text that this handler
+        // produces.  Gauge text arrives via Gauges.CollectionChanged (_onGaugesChanged)
+        // — do not disturb that path.  Filtering here avoids spurious rebuilds on
+        // every VM property tick (Plan, IsDemoMode, etc.), especially in demo mode
+        // which fires PropertyChanged at ~4 Hz.
+        if (e.PropertyName is not (nameof(UsageViewModel.IsConnected) or nameof(UsageViewModel.Health)))
+            return;
+
         UpdateTooltip();
     }
 
@@ -155,6 +166,9 @@ public sealed class TrayIconManager : IDisposable
         if (text.Length > 127)
             text = string.Concat(text.AsSpan(0, 124), "...");
 
+        // De-dup: skip the native Shell API call if the text hasn't changed.
+        if (text == _lastTooltipText) return;
+        _lastTooltipText = text;
         _trayIcon.ToolTipText = text;
     }
 

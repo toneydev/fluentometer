@@ -37,6 +37,24 @@ namespace Fluentometer.Views;
 public sealed partial class DashboardPage : Page
 {
     // -------------------------------------------------------------------------
+    // Health-pill and connection-dot brushes — do not mutate — shared.
+    // Identity-coded WCAG status colors: intentionally NOT ThemeResource.
+    // Color rationale: see ApplyHealthPillToContainer XML doc.
+    // -------------------------------------------------------------------------
+    private static readonly SolidColorBrush s_pillError =
+        new(Color.FromArgb(0xFF, 0xC4, 0x2B, 0x1A));
+    private static readonly SolidColorBrush s_pillNeedsSignIn =
+        new(Color.FromArgb(0xFF, 0x0F, 0x6C, 0xBD));
+    private static readonly SolidColorBrush s_pillDegraded =
+        new(Color.FromArgb(0xFF, 0x9D, 0x5D, 0x00));
+    private static readonly SolidColorBrush s_pillUnknown =
+        new(Color.FromArgb(0xFF, 0x88, 0x88, 0x88));
+    private static readonly SolidColorBrush s_dotConnected =
+        new(Color.FromArgb(0xFF, 0x6F, 0xCF, 0x6F));
+    private static readonly SolidColorBrush s_dotDisconnected =
+        new(Color.FromArgb(0xFF, 0x88, 0x88, 0x88));
+
+    // -------------------------------------------------------------------------
     // State
     // -------------------------------------------------------------------------
     private UsageViewModel? _vm;
@@ -50,6 +68,7 @@ public sealed partial class DashboardPage : Page
     private ILaunchOnLogin? _launchOnLogin;
     private DemoModeController? _demoController;
     private IProviderStore? _providerStore;
+    private IReadOnlySet<string> _detectedProviderIds = new HashSet<string>();
 
     // Keyed by (themeId, GradientDirection, providerId). providerId is "" for the 8
     // normal themes (single shared brush, exactly as before); for the "brand" theme it
@@ -163,13 +182,15 @@ public sealed partial class DashboardPage : Page
         FileThemeStore fileThemeStore,
         ILaunchOnLogin launchOnLogin,
         DemoModeController demoController,
-        IProviderStore providerStore)
+        IProviderStore providerStore,
+        IReadOnlySet<string> detectedProviderIds)
     {
         _client = client;
         _fileThemeStore = fileThemeStore;
         _launchOnLogin = launchOnLogin;
         _demoController = demoController;
         _providerStore = providerStore;
+        _detectedProviderIds = detectedProviderIds;
 
         SettingsButton.Click += (_, _) => NavigateToSettings();
     }
@@ -183,7 +204,7 @@ public sealed partial class DashboardPage : Page
         Frame.Navigate(typeof(SettingsPage));
         if (Frame.Content is SettingsPage settings)
         {
-            settings.Initialize(_themeService, _client, _fileThemeStore, _launchOnLogin, _demoController, _providerStore);
+            settings.Initialize(_themeService, _client, _fileThemeStore, _launchOnLogin, _demoController, _providerStore, _detectedProviderIds);
         }
     }
 
@@ -304,31 +325,10 @@ public sealed partial class DashboardPage : Page
         var key = (theme.Id, direction, isBrand ? providerId : "");
         if (_brushCache.TryGetValue(key, out var cached)) return cached;
 
-        var fill = new LinearGradientBrush
-        {
-            StartPoint = new Windows.Foundation.Point(0, 0),
-            EndPoint = new Windows.Foundation.Point(1, 2),
-        };
-        foreach (var (color, offset) in GradientStops.OrderedStops(stops, direction))
-        {
-            fill.GradientStops.Add(new GradientStop { Color = ColorParser.Parse(color), Offset = offset });
-        }
-
-        var glow = new LinearGradientBrush
-        {
-            StartPoint = new Windows.Foundation.Point(0, 0),
-            EndPoint = new Windows.Foundation.Point(1, 0),
-        };
-        glow.GradientStops.Add(new GradientStop
-        {
-            Color = Color.FromArgb(0x00, accentColor.R, accentColor.G, accentColor.B),
-            Offset = 0,
-        });
-        glow.GradientStops.Add(new GradientStop
-        {
-            Color = Color.FromArgb(0x33, accentColor.R, accentColor.G, accentColor.B),
-            Offset = 1,
-        });
+        // Dashboard fill uses the diagonal endpoint (1, 2).
+        // Settings swatch uses (1, 0) — passed separately by that consumer via GradientBrushFactory.
+        var fill = GradientBrushFactory.BuildFill(stops, direction, new Windows.Foundation.Point(1, 2));
+        var glow = GradientBrushFactory.BuildGlow(accentColor);
 
         var pair = (fill, glow);
         _brushCache[key] = pair;
@@ -512,10 +512,10 @@ public sealed partial class DashboardPage : Page
         // Color-code the pill background based on health severity.
         pill.Background = health switch
         {
-            "error" => new SolidColorBrush(Color.FromArgb(0xFF, 0xC4, 0x2B, 0x1A)),
-            "needs-signin" => new SolidColorBrush(Color.FromArgb(0xFF, 0x0F, 0x6C, 0xBD)),
-            "degraded" => new SolidColorBrush(Color.FromArgb(0xFF, 0x9D, 0x5D, 0x00)),
-            _ => new SolidColorBrush(Color.FromArgb(0xFF, 0x88, 0x88, 0x88)),
+            "error" => s_pillError,
+            "needs-signin" => s_pillNeedsSignIn,
+            "degraded" => s_pillDegraded,
+            _ => s_pillUnknown,
         };
     }
 
@@ -575,9 +575,7 @@ public sealed partial class DashboardPage : Page
     {
         if (_vm is null) return;
 
-        ConnectionDot.Fill = _vm.IsConnected
-            ? new SolidColorBrush(Color.FromArgb(0xFF, 0x6F, 0xCF, 0x6F))
-            : new SolidColorBrush(Color.FromArgb(0xFF, 0x88, 0x88, 0x88));
+        ConnectionDot.Fill = _vm.IsConnected ? s_dotConnected : s_dotDisconnected;
 
         // Banners driven by the worst-of Health rollup (same as original single-provider).
         DegradedBanner.IsOpen = _vm.Health == "degraded";

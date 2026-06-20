@@ -12,33 +12,6 @@ using Xunit;
 
 namespace Fluentometer.Tests.Capture;
 
-// ── Fake HTTP handler ─────────────────────────────────────────────────────────
-
-/// <summary>
-/// In-memory HttpMessageHandler for unit tests. No real network calls are made.
-/// </summary>
-internal sealed class FakeHttpHandler : HttpMessageHandler
-{
-    private readonly Func<HttpRequestMessage, HttpResponseMessage> _respond;
-
-    public FakeHttpHandler(Func<HttpRequestMessage, HttpResponseMessage> respond)
-        => _respond = respond;
-
-    public FakeHttpHandler(HttpStatusCode status, string body = "")
-        : this(_ => new HttpResponseMessage(status)
-        {
-            Content = new StringContent(body, Encoding.UTF8, "application/json")
-        })
-    { }
-
-    protected override Task<HttpResponseMessage> SendAsync(
-        HttpRequestMessage request, CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(_respond(request));
-    }
-}
-
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 public class OauthUsageClientTests
@@ -253,43 +226,29 @@ public class OauthUsageClientTests
 
     // ── HTTP status mapping ───────────────────────────────────────────────────
 
-    [Fact]
-    public async Task Returns429WithRetryAfterFromHeader()
+    [Theory]
+    [InlineData(HttpStatusCode.TooManyRequests, "190", 190L)]
+    [InlineData(HttpStatusCode.TooManyRequests, null, 180L)]
+    public async Task Returns429WithRetryAfterOrDefault(
+        HttpStatusCode _, string? retryAfterValue, long expectedSecs)
     {
-        var (client, _) = MakeClient(HttpStatusCode.TooManyRequests, "",
-            new Dictionary<string, string> { ["Retry-After"] = "190" });
+        IDictionary<string, string>? headers = retryAfterValue is not null
+            ? new Dictionary<string, string> { ["Retry-After"] = retryAfterValue }
+            : null;
+        var (client, _) = MakeClient(HttpStatusCode.TooManyRequests, "", headers);
 
         var result = await client.FetchAsync("https://api.anthropic.com", "tok", CancellationToken.None);
 
         var rateLimited = Assert.IsType<UsageResult.RateLimited>(result);
-        Assert.Equal(190L, rateLimited.RetryAfterSecs);
+        Assert.Equal(expectedSecs, rateLimited.RetryAfterSecs);
     }
 
-    [Fact]
-    public async Task Returns429WithDefault180WhenRetryAfterAbsent()
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    public async Task Returns401Or403AsUnauthorized(HttpStatusCode status)
     {
-        var (client, _) = MakeClient(HttpStatusCode.TooManyRequests);
-
-        var result = await client.FetchAsync("https://api.anthropic.com", "tok", CancellationToken.None);
-
-        var rateLimited = Assert.IsType<UsageResult.RateLimited>(result);
-        Assert.Equal(180L, rateLimited.RetryAfterSecs);
-    }
-
-    [Fact]
-    public async Task Returns401AsUnauthorized()
-    {
-        var (client, _) = MakeClient(HttpStatusCode.Unauthorized);
-
-        var result = await client.FetchAsync("https://api.anthropic.com", "tok", CancellationToken.None);
-
-        Assert.IsType<UsageResult.Unauthorized>(result);
-    }
-
-    [Fact]
-    public async Task Returns403AsUnauthorized()
-    {
-        var (client, _) = MakeClient(HttpStatusCode.Forbidden);
+        var (client, _) = MakeClient(status);
 
         var result = await client.FetchAsync("https://api.anthropic.com", "tok", CancellationToken.None);
 

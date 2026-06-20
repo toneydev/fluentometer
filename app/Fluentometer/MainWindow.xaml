@@ -55,9 +55,10 @@
                 Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
         </Grid>
 
-        <!-- Main content frame -->
+        <!-- Main content frame — internal so App (composition root) can navigate it directly. -->
         <Frame
             x:Name="RootFrame"
+            x:FieldModifier="internal"
             Grid.Row="1"
             Background="Transparent" />
 

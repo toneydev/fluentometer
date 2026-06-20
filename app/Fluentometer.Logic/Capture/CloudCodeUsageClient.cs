@@ -8,7 +8,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
@@ -17,6 +16,7 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Fluentometer.Logic.Ipc;
+using static Fluentometer.Logic.Capture.HttpClientHelper;
 
 namespace Fluentometer.Logic.Capture;
 
@@ -216,17 +216,6 @@ public sealed class CloudCodeUsageClient : ICloudCodeUsageClient
         return request;
     }
 
-    /// <summary>Mirror of <see cref="WhamUsageClient"/>'s ParseRetryAfter; default 180 s.</summary>
-    private static long ParseRetryAfter(HttpResponseHeaders headers)
-    {
-        if (headers.TryGetValues("Retry-After", out var values))
-        {
-            foreach (var v in values)
-                if (long.TryParse(v, out var secs)) return secs;
-        }
-        return 180;
-    }
-
     public static string PlanFromTier(string? currentTierId, string? paidTierId)
     {
         if (string.Equals(paidTierId, "standard-tier", StringComparison.OrdinalIgnoreCase))
@@ -244,31 +233,12 @@ public sealed class CloudCodeUsageClient : ICloudCodeUsageClient
         };
     }
 
-    private static string Humanize(string s)
-    {
-        var words = s.Split('_', StringSplitOptions.RemoveEmptyEntries);
-        for (var i = 0; i < words.Length; i++)
-        {
-            var w = words[i].ToLowerInvariant();
-            words[i] = char.ToUpperInvariant(w[0]) + w[1..];
-        }
-        return string.Join(' ', words);
-    }
-
     private static string Sanitize(string s)
     {
         var sb = new StringBuilder(s.Length);
         foreach (var c in s)
             sb.Append(char.IsLetterOrDigit(c) ? char.ToLowerInvariant(c) : '_');
         return sb.ToString();
-    }
-
-    private static long? ParseRfc3339ToUnix(string? s)
-    {
-        if (s is null) return null;
-        return DateTimeOffset.TryParse(s, null, DateTimeStyles.RoundtripKind, out var dto)
-            ? dto.ToUnixTimeSeconds()
-            : null;
     }
 }
 

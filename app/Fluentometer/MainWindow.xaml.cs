@@ -1,13 +1,6 @@
 using System;
-using Fluentometer.Logic.Ipc;
-using Fluentometer.Logic.Settings;
-using Fluentometer.Logic.Theming;
-using Fluentometer.Logic.ViewModels;
-using Fluentometer.Settings;
 using Fluentometer.Ui;
-using Fluentometer.Views;
 using H.NotifyIcon;
-using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media;
@@ -15,8 +8,9 @@ using Microsoft.UI.Xaml.Media;
 namespace Fluentometer;
 
 /// <summary>
-/// Shell window.  Dependencies are injected by App.xaml.cs after the DI
-/// container is built — see <see cref="InjectDependencies"/>.
+/// Shell window.  Navigation and dependency injection are performed by
+/// App.xaml.cs (the composition root) via <see cref="RootFrame"/> after the
+/// DI container is built.
 /// Close is intercepted: the window hides to the system tray rather than
 /// exiting, so monitoring continues in the background.
 /// </summary>
@@ -74,33 +68,6 @@ public sealed partial class MainWindow : Window
         // AppWindow.Closing which fires before destruction and is cancellable.
         // -----------------------------------------------------------------------
         appWindow.Closing += OnWindowClosing;
-    }
-
-    // -------------------------------------------------------------------------
-    // Dependency injection entry point called from App.xaml.cs OnLaunched.
-    // -------------------------------------------------------------------------
-
-    /// <summary>
-    /// Injects all dependencies from the DI composition root.
-    /// Must be called before the window is activated.
-    /// </summary>
-    public void InjectDependencies(
-        UsageViewModel vm,
-        ThemeService themeService,
-        IUsageClient client,
-        FileThemeStore fileThemeStore,
-        ILaunchOnLogin launchOnLogin,
-        DemoModeController demoController,
-        IProviderStore providerStore)
-    {
-        // Navigate the frame to the dashboard and inject dependencies.
-        RootFrame.Navigate(typeof(DashboardPage));
-        if (RootFrame.Content is DashboardPage page)
-        {
-            page.SetViewModel(vm, themeService);
-            page.SetSettingsDependencies(client, fileThemeStore, launchOnLogin, demoController, providerStore);
-            page.SetWindow(this);
-        }
     }
 
     // -------------------------------------------------------------------------
