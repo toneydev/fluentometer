@@ -291,8 +291,9 @@
                                                         Value="{x:Bind BarValue, Mode=OneWay}"
                                                         IsEstimate="{x:Bind IsEstimate, Mode=OneWay}" />
 
-                                                    <!-- Overlay text (white) sits directly on the bar. -->
-                                                    <Grid Padding="20,14">
+                                                    <!-- Overlay text (white) sits directly on the bar.
+                                                         x:Name lets the density pass set Padding per level. -->
+                                                    <Grid x:Name="CardContentGrid" Padding="20,14">
                                                         <Grid.RowDefinitions>
                                                             <RowDefinition Height="Auto" />
                                                             <RowDefinition Height="*"    />
@@ -319,6 +320,7 @@
                                                              — 18 chars), which overflows the card at minimum width (160 DIP)
                                                              without wrapping. A percent string ("87%") never wraps. -->
                                                         <TextBlock
+                                                            x:Name="HeroValueText"
                                                             Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2"
                                                             Text="{x:Bind ValueText, Mode=OneWay}"
                                                             Foreground="#FFF5F5F5"

@@ -87,6 +87,31 @@
             </StackPanel>
 
             <!-- ============================================================
+                 Gauge density — Comfortable / Compact / Mini.
+                 Rendered with RadioButtons to match the gradient-direction
+                 control; core WinUI 3 has no Segmented control.
+            ============================================================ -->
+            <StackPanel Spacing="8">
+                <TextBlock
+                    Text="Density"
+                    Style="{StaticResource BodyStrongTextBlockStyle}"
+                    Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+
+                <TextBlock
+                    Text="How much space each usage card takes. Compact and Mini fit more providers on screen."
+                    Style="{StaticResource CaptionTextBlockStyle}"
+                    Opacity="0.7" />
+
+                <RadioButtons
+                    x:Name="DensityRadios"
+                    AutomationProperties.Name="Gauge density">
+                    <x:String>Comfortable</x:String>
+                    <x:String>Compact</x:String>
+                    <x:String>Mini</x:String>
+                </RadioButtons>
+            </StackPanel>
+
+            <!-- ============================================================
                  Launch on login
             ============================================================ -->
             <StackPanel Spacing="8">

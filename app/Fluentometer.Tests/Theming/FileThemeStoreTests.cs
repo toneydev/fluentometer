@@ -158,4 +158,35 @@ public sealed class FileThemeStoreTests : IDisposable
         });
         Assert.Null(ex);
     }
+
+    [Fact]
+    public void Density_defaults_to_comfortable_when_absent()
+    {
+        // Fresh store, nothing written.
+        Assert.Equal("comfortable", _store.LoadAppSettings().Density);
+    }
+
+    [Fact]
+    public void Density_round_trips_through_AppSettings()
+    {
+        var settings = _store.LoadAppSettings();
+        settings.Density = "mini";
+        _store.SaveAppSettings(settings);
+
+        Assert.Equal("mini", _store.LoadAppSettings().Density);
+    }
+
+    [Fact]
+    public void GradientDirection_survives_a_density_bearing_SaveAppSettings()
+    {
+        // The two-path invariant: an AppSettings save (now carrying Density) must
+        // not clobber the atomically-saved gradient direction.
+        _store.SaveGradientDirection(GradientDirection.BrightToDeep);
+
+        var settings = _store.LoadAppSettings();
+        settings.Density = "compact";
+        _store.SaveAppSettings(settings);
+
+        Assert.Equal(GradientDirection.BrightToDeep, _store.LoadGradientDirection());
+    }
 }

@@ -80,6 +80,7 @@ public sealed class FileThemeStore : IThemeStore
         public string? ThemeId { get; set; }
         public int? PollIntervalSeconds { get; set; }
         public bool? OfflineOnly { get; set; }
+        public string? Density { get; set; }
         public string? GradientDirection { get; set; }
     }
 
@@ -134,6 +135,7 @@ public sealed class FileThemeStore : IThemeStore
         if (json.ThemeId is not null) s.ThemeId = json.ThemeId;
         if (json.PollIntervalSeconds.HasValue) s.PollIntervalSeconds = json.PollIntervalSeconds.Value;
         if (json.OfflineOnly.HasValue) s.OfflineOnly = json.OfflineOnly.Value;
+        if (json.Density is not null) s.Density = json.Density;
         return s;
     }
 
@@ -146,6 +148,7 @@ public sealed class FileThemeStore : IThemeStore
         json.ThemeId = settings.ThemeId;
         json.PollIntervalSeconds = settings.PollIntervalSeconds;
         json.OfflineOnly = settings.OfflineOnly;
+        json.Density = settings.Density;
         Save(json);
     }
 

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Fluentometer; // DemoModeController
 using Fluentometer.Logic.Capture;
+using Fluentometer.Logic.Density;
 using Fluentometer.Logic.Ipc;
 using Fluentometer.Logic.Settings;
 using Fluentometer.Logic.Theming;
@@ -36,6 +37,7 @@ public sealed partial class SettingsPage : Page
     private IProviderStore? _providerStore;
     private IReadOnlySet<string> _detectedProviderIds = new HashSet<string>();
     private AppSettings? _settings;
+    private DensityService? _densityService;
 
     // The grid that holds theme swatches, built in BuildThemeGallery().
     private Grid? _swatchGrid;
@@ -69,7 +71,8 @@ public sealed partial class SettingsPage : Page
         ILaunchOnLogin launchOnLogin,
         DemoModeController demoController,
         IProviderStore providerStore,
-        IReadOnlySet<string> detectedProviderIds)
+        IReadOnlySet<string> detectedProviderIds,
+        DensityService densityService)
     {
         _themeService = themeService;
         _client = client;
@@ -78,6 +81,7 @@ public sealed partial class SettingsPage : Page
         _demoController = demoController;
         _providerStore = providerStore;
         _detectedProviderIds = detectedProviderIds;
+        _densityService = densityService;
 
         _settings = _fileThemeStore.LoadAppSettings();
 
@@ -86,6 +90,7 @@ public sealed partial class SettingsPage : Page
         {
             BuildThemeGallery();
             SetupGradientDirection();
+            SetupDensity();
             SetupLaunchOnLogin();
             SetupPollInterval();
             SetupMonitoredServices();
@@ -281,6 +286,37 @@ public sealed partial class SettingsPage : Page
             : GradientDirection.BrightToDeep;
         _themeService.ApplyDirection(dir);
         BuildThemeGallery();
+    }
+
+    // -------------------------------------------------------------------------
+    // Gauge density
+    // -------------------------------------------------------------------------
+
+    private void SetupDensity()
+    {
+        if (_densityService is null) return;
+        DensityRadios.SelectedIndex = _densityService.Current switch
+        {
+            GaugeDensity.Compact => 1,
+            GaugeDensity.Mini => 2,
+            _ => 0,
+        };
+        DensityRadios.SelectionChanged += OnDensityChanged;
+    }
+
+    private void OnDensityChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initializing || _densityService is null || _settings is null) return;
+
+        var density = DensityRadios.SelectedIndex switch
+        {
+            1 => GaugeDensity.Compact,
+            2 => GaugeDensity.Mini,
+            _ => GaugeDensity.Comfortable,
+        };
+
+        _densityService.Apply(density);            // persists + raises DensityChanged (live)
+        _settings.Density = DensityCatalog.ToId(density);  // keep local copy in sync
     }
 
     // -------------------------------------------------------------------------

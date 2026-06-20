@@ -93,6 +93,9 @@ public partial class App : Application
         var themeService = new ThemeService(themeStore);
         themeService.Initialize();
 
+        var densityService = new Fluentometer.Logic.Density.DensityService(themeStore);
+        densityService.Initialize();
+
         // ------------------------------------------------------------------
         // Build in-process client (replaces sidecar + named pipe):
         //   HttpClient Timeout = 30 s — OauthUsageClient relies on this.
@@ -173,7 +176,7 @@ public partial class App : Application
         if (_window.RootFrame.Content is DashboardPage page)
         {
             page.SetViewModel(vm, themeService);
-            page.SetSettingsDependencies(client, themeStore, launchOnLogin, demoController, providerStore, registry.DetectedProviderIds);
+            page.SetSettingsDependencies(client, themeStore, launchOnLogin, demoController, providerStore, registry.DetectedProviderIds, densityService);
             page.SetWindow(_window);
         }
 

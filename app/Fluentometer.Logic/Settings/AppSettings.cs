@@ -14,6 +14,12 @@ public sealed class AppSettings
     public string ThemeId { get; set; } = "aurora";
 
     /// <summary>
+    /// Gauge density id — "comfortable" (default), "compact", or "mini".
+    /// Parsed via DensityCatalog.Parse; unknown values fall back to "comfortable".
+    /// </summary>
+    public string Density { get; set; } = "comfortable";
+
+    /// <summary>
     /// If true, the app reads only the locally cached usage file produced by
     /// the capture engine and never triggers an online refresh.
     /// </summary>

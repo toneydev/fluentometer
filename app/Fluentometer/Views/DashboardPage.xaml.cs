@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.Specialized;
 using Fluentometer; // DemoModeController
 using Fluentometer.Controls;
+using Fluentometer.Logic.Density;
 using Fluentometer.Logic.Ipc;
 using Fluentometer.Logic.Settings;
 using Fluentometer.Logic.Theming;
@@ -69,6 +70,8 @@ public sealed partial class DashboardPage : Page
     private DemoModeController? _demoController;
     private IProviderStore? _providerStore;
     private IReadOnlySet<string> _detectedProviderIds = new HashSet<string>();
+    private DensityService? _densityService;
+    private bool _densitySubscribed;
 
     // Keyed by (themeId, GradientDirection, providerId). providerId is "" for the 8
     // normal themes (single shared brush, exactly as before); for the "brand" theme it
@@ -133,6 +136,7 @@ public sealed partial class DashboardPage : Page
         UpdateEmptyState();
         ApplyTheme(_themeService.Current);
         _wired = true;
+        WireDensity();
     }
 
     private void TearDown()
@@ -150,6 +154,11 @@ public sealed partial class DashboardPage : Page
         {
             _mainWindow.WindowVisibilityChanged -= _visibilityHandler;
             _visibilityHandler = null;
+        }
+        if (_densityService is not null && _densitySubscribed)
+        {
+            _densityService.DensityChanged -= DensityService_DensityChanged;
+            _densitySubscribed = false;
         }
         _wired = false;
     }
@@ -183,7 +192,8 @@ public sealed partial class DashboardPage : Page
         ILaunchOnLogin launchOnLogin,
         DemoModeController demoController,
         IProviderStore providerStore,
-        IReadOnlySet<string> detectedProviderIds)
+        IReadOnlySet<string> detectedProviderIds,
+        DensityService densityService)
     {
         _client = client;
         _fileThemeStore = fileThemeStore;
@@ -191,20 +201,26 @@ public sealed partial class DashboardPage : Page
         _demoController = demoController;
         _providerStore = providerStore;
         _detectedProviderIds = detectedProviderIds;
+        _densityService = densityService;
 
         SettingsButton.Click += (_, _) => NavigateToSettings();
+
+        // Containers may not be realized yet; ElementPrepared applies per-card as they
+        // realize. This handles the already-realized case + subscribes once.
+        WireDensity();
     }
 
     private void NavigateToSettings()
     {
         if (_themeService is null || _client is null ||
             _fileThemeStore is null || _launchOnLogin is null ||
-            _demoController is null || _providerStore is null) return;
+            _demoController is null || _providerStore is null ||
+            _densityService is null) return;
 
         Frame.Navigate(typeof(SettingsPage));
         if (Frame.Content is SettingsPage settings)
         {
-            settings.Initialize(_themeService, _client, _fileThemeStore, _launchOnLogin, _demoController, _providerStore, _detectedProviderIds);
+            settings.Initialize(_themeService, _client, _fileThemeStore, _launchOnLogin, _demoController, _providerStore, _detectedProviderIds, _densityService);
         }
     }
 
@@ -336,6 +352,63 @@ public sealed partial class DashboardPage : Page
     }
 
     // -------------------------------------------------------------------------
+    // Density — uniform sizing applied imperatively (same category as theme
+    // brushes). Safe under recycling because every card gets identical values;
+    // we never touch HeroValueText.Text (that stays x:Bind — Gotcha 2).
+    // -------------------------------------------------------------------------
+
+    private void WireDensity()
+    {
+        if (_densityService is null) return;
+        if (!_densitySubscribed)
+        {
+            _densityService.DensityChanged += DensityService_DensityChanged;
+            _densitySubscribed = true;
+        }
+        ApplyDensity(CurrentDensityMetrics());
+    }
+
+    private void DensityService_DensityChanged(GaugeDensity density)
+        => DispatcherQueue.TryEnqueue(() => ApplyDensity(DensityCatalog.For(density)));
+
+    /// <summary>Applies density metrics to every realized inner layout + gauge card.</summary>
+    private void ApplyDensity(DensityMetrics m)
+    {
+        if (_vm is null) return;
+        for (var gi = 0; gi < _vm.Groups.Count; gi++)
+        {
+            var groupContainer = GroupRepeater.TryGetElement(gi);
+            if (FindInnerLayout(groupContainer) is { } layout)
+                layout.MinItemHeight = m.ItemMinHeight;
+
+            var innerRepeater = FindInnerRepeater(groupContainer);
+            if (innerRepeater is null) continue;
+
+            var group = _vm.Groups[gi];
+            for (var gj = 0; gj < group.Gauges.Count; gj++)
+                ApplyDensityToCard(innerRepeater.TryGetElement(gj), m);
+        }
+    }
+
+    private static void ApplyDensityToCard(UIElement? container, DensityMetrics m)
+    {
+        if (container is not Border panel) return;
+        panel.MinHeight = m.CardMinHeight;
+
+        if (FindNamedChild<Grid>(panel, "CardContentGrid") is { } grid)
+            grid.Padding = new Thickness(m.PadLeft, m.PadTop, m.PadRight, m.PadBottom);
+
+        if (FindNamedChild<TextBlock>(panel, "HeroValueText") is { } value)
+            value.FontSize = m.ValueFontSize;
+
+        if (FindNamedChild<TextBlock>(panel, "CountdownText") is { } countdown)
+            countdown.Visibility = m.ShowCountdown ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private DensityMetrics CurrentDensityMetrics()
+        => DensityCatalog.For(_densityService?.Current ?? GaugeDensity.Comfortable);
+
+    // -------------------------------------------------------------------------
     // GroupRepeater ElementPrepared — outer, section-level
     // -------------------------------------------------------------------------
 
@@ -356,6 +429,10 @@ public sealed partial class DashboardPage : Page
         var layout = FindInnerLayout(args.Element);
         if (layout is not null)
             layout.MaximumRowsOrColumns = _currentColumns;
+
+        // Apply current density's row height to this newly realized inner layout.
+        if (layout is not null)
+            layout.MinItemHeight = CurrentDensityMetrics().ItemMinHeight;
 
         // Phase-1 invariant: show the group header row ONLY when there are multiple
         // provider groups. With a single Claude group the header is collapsed so the
@@ -397,6 +474,10 @@ public sealed partial class DashboardPage : Page
             if (gauge is not null)
                 RefreshCountdownOnGrid(grid, gauge);
         }
+
+        // Apply current density to this newly realized card (uniform → no desync).
+        if (_densityService is not null && args.Element is Border densityPanel)
+            ApplyDensityToCard(densityPanel, CurrentDensityMetrics());
     }
 
     // -------------------------------------------------------------------------
