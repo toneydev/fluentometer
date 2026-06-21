@@ -74,14 +74,28 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
 
-                    <!-- Connection indicator dot: green = connected, dim = disconnected -->
+                    <!-- Connection indicator dot: green = connected, dim = disconnected,
+                         slow red pulse = stale/unreachable (tooltip set imperatively in UpdateHeader). -->
                     <Ellipse
                         Grid.Column="1"
                         x:Name="ConnectionDot"
                         Width="9"
                         Height="9"
                         VerticalAlignment="Center"
-                        AutomationProperties.Name="Connection status indicator" />
+                        AutomationProperties.Name="Connection status indicator">
+                        <Ellipse.Resources>
+                            <Storyboard x:Name="StalePulse" RepeatBehavior="Forever" AutoReverse="True">
+                                <DoubleAnimation
+                                    Storyboard.TargetName="ConnectionDot"
+                                    Storyboard.TargetProperty="Opacity"
+                                    From="1.0" To="0.25" Duration="0:0:1.8">
+                                    <DoubleAnimation.EasingFunction>
+                                        <SineEase EasingMode="EaseInOut" />
+                                    </DoubleAnimation.EasingFunction>
+                                </DoubleAnimation>
+                            </Storyboard>
+                        </Ellipse.Resources>
+                    </Ellipse>
 
                     <!-- Refresh button -->
                     <Button

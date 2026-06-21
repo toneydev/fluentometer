@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
 
@@ -42,6 +43,26 @@ public sealed record UsageSnapshot(
     string Health,
     string Plan,
     IReadOnlyList<Gauge> Gauges);
+
+/// <summary>
+/// Per-provider outcome of one refresh cycle, raised by
+/// <see cref="Fluentometer.Logic.Capture.LiveUsageClient"/> via
+/// <see cref="IUsageClient.StatusChanged"/> once per provider per cycle — even when no
+/// snapshot was emitted (e.g. the provider threw). This is the channel that makes silent
+/// failures observable; it never carries gauge data, so it cannot blank the dashboard.
+/// </summary>
+/// <param name="ProviderId">Stable provider id (e.g. "claude").</param>
+/// <param name="LastSuccessUtc">
+/// Time of the last successful refresh, or <c>null</c> if this provider has never succeeded.
+/// A "success" is a snapshot with Health ok / degraded / needs-signin.
+/// </param>
+/// <param name="ConsecutiveFailures">Failed cycles since the last success (0 right after a success).</param>
+/// <param name="IntervalSecs">The engine's current effective poll interval, in seconds.</param>
+public sealed record RefreshStatus(
+    string ProviderId,
+    DateTimeOffset? LastSuccessUtc,
+    int ConsecutiveFailures,
+    long IntervalSecs);
 
 public sealed record ClientCommand(
     [property: JsonPropertyName("type")] string Type,

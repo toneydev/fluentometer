@@ -19,8 +19,9 @@ public class DemoDriverTests
     private sealed class FakeClient : IUsageClient
     {
         public event Action<UsageSnapshot>? SnapshotReceived;
-#pragma warning disable CS0067  // ConnectionChanged satisfies IUsageClient; never raised in tests
+#pragma warning disable CS0067  // ConnectionChanged/StatusChanged satisfy IUsageClient; never raised in tests
         public event Action<bool>? ConnectionChanged;
+        public event Action<RefreshStatus>? StatusChanged;
 #pragma warning restore CS0067
         public ClientCommand? LastSent;
         public Task StartAsync(CancellationToken ct) => Task.CompletedTask;

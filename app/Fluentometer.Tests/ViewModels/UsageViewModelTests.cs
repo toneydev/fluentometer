@@ -18,11 +18,13 @@ public class UsageViewModelTests
     {
         public event Action<UsageSnapshot>? SnapshotReceived;
         public event Action<bool>? ConnectionChanged;
+        public event Action<RefreshStatus>? StatusChanged;
         public ClientCommand? LastSent;
         public Task StartAsync(CancellationToken ct) => Task.CompletedTask;
         public Task SendAsync(ClientCommand cmd) { LastSent = cmd; return Task.CompletedTask; }
         public void PushSnapshot(UsageSnapshot s) => SnapshotReceived?.Invoke(s);
         public void SetConnected(bool c) => ConnectionChanged?.Invoke(c);
+        public void PushStatus(RefreshStatus s) => StatusChanged?.Invoke(s);
     }
 
     // -------------------------------------------------------------------------
@@ -303,5 +305,48 @@ public class UsageViewModelTests
         // Flat Gauges also reflects it.
         Assert.Single(vm.Gauges);
         Assert.Equal(0.33, vm.Gauges[0].Utilization);
+    }
+
+    // -------------------------------------------------------------------------
+    // Staleness signal (Task 3)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void TwoFailures_ThenEvaluate_SetsIsStaleAndDetail()
+    {
+        var client = new FakeClient();
+        var vm = new UsageViewModel(client, new SyncDispatcher());
+
+        client.PushStatus(new RefreshStatus("claude", null, 2, 180));
+        vm.EvaluateStaleness(new DateTimeOffset(2026, 6, 21, 12, 0, 0, TimeSpan.Zero));
+
+        Assert.True(vm.IsStale);
+        Assert.Contains("Claude", vm.StatusDetail);
+    }
+
+    [Fact]
+    public void Success_KeepsIsStaleFalse()
+    {
+        var client = new FakeClient();
+        var vm = new UsageViewModel(client, new SyncDispatcher());
+        var now = new DateTimeOffset(2026, 6, 21, 12, 0, 0, TimeSpan.Zero);
+
+        client.PushStatus(new RefreshStatus("claude", now, 0, 180));
+        vm.EvaluateStaleness(now);
+
+        Assert.False(vm.IsStale);
+        Assert.Equal("", vm.StatusDetail);
+    }
+
+    [Fact]
+    public void DemoMode_SuppressesStaleness()
+    {
+        var client = new FakeClient();
+        var vm = new UsageViewModel(client, new SyncDispatcher()) { IsDemoMode = true };
+
+        client.PushStatus(new RefreshStatus("claude", null, 5, 180));
+        vm.EvaluateStaleness(new DateTimeOffset(2026, 6, 21, 12, 0, 0, TimeSpan.Zero));
+
+        Assert.False(vm.IsStale);
     }
 }

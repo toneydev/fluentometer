@@ -65,8 +65,21 @@ public sealed class LiveUsageClient : IUsageClient
     /// </summary>
     private readonly Dictionary<string, UsageSnapshot> _latest = new();
 
+    /// <summary>Last successful refresh time per provider; absent until first success.</summary>
+    private readonly Dictionary<string, DateTimeOffset> _lastSuccessUtc = new();
+
+    /// <summary>Consecutive failed cycles per provider since the last success.</summary>
+    private readonly Dictionary<string, int> _consecutiveFailures = new();
+
+    /// <summary>Effective poll cadence in seconds, reported in every <see cref="RefreshStatus.IntervalSecs"/>.
+    /// Initialised to Math.Max(DefaultIntervalSecs, effectiveFloorSecs) and updated whenever the
+    /// user changes the interval via <c>setPollInterval</c>, so it always equals the actual
+    /// PeriodicTimer period. Never lower than <see cref="MinIntervalSecs"/>.</summary>
+    private long _statusIntervalSecs = MinIntervalSecs;
+
     public event Action<UsageSnapshot>? SnapshotReceived;
     public event Action<bool>? ConnectionChanged;
+    public event Action<RefreshStatus>? StatusChanged;
 
     // Commands flow through an unbounded channel so SendAsync never blocks.
     private readonly Channel<ClientCommand> _commands =
@@ -117,6 +130,7 @@ public sealed class LiveUsageClient : IUsageClient
         // Set lastRefresh far enough in the past that an immediate refresh is allowed.
         var lastRefresh = DateTimeOffset.UtcNow.AddSeconds(-effectiveFloorSecs);
         var intervalSecs = DefaultIntervalSecs;
+        _statusIntervalSecs = Math.Max(intervalSecs, effectiveFloorSecs);
 
         // Perform the first refresh immediately (matches tokio interval's immediate tick).
         await RefreshAllAsync(ct);
@@ -176,6 +190,7 @@ public sealed class LiveUsageClient : IUsageClient
                                 intervalSecs = Math.Max(
                                     cmd.Seconds ?? DefaultIntervalSecs,
                                     effectiveFloorSecs);
+                                _statusIntervalSecs = intervalSecs;
                                 intervalChanged = true;
                                 // Break drain — the outer loop will recreate the timer.
                                 break;
@@ -197,6 +212,34 @@ public sealed class LiveUsageClient : IUsageClient
     }
 
     // ── Private helpers ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Updates per-provider success/failure tracking and raises <see cref="StatusChanged"/>.
+    /// A success resets the failure count and stamps the last-success time; a failure
+    /// increments the count and leaves the last-success time untouched.
+    /// </summary>
+    private void RecordOutcome(string providerId, bool isSuccess)
+    {
+        if (isSuccess)
+        {
+            _lastSuccessUtc[providerId] = DateTimeOffset.UtcNow;
+            _consecutiveFailures[providerId] = 0;
+        }
+        else
+        {
+            _consecutiveFailures[providerId] =
+                (_consecutiveFailures.TryGetValue(providerId, out var n) ? n : 0) + 1;
+        }
+
+        DateTimeOffset? lastSuccess =
+            _lastSuccessUtc.TryGetValue(providerId, out var ls) ? ls : null;
+
+        StatusChanged?.Invoke(new RefreshStatus(
+            providerId,
+            lastSuccess,
+            _consecutiveFailures.TryGetValue(providerId, out var f) ? f : 0,
+            _statusIntervalSecs));
+    }
 
     /// <summary>
     /// Returns the effective poll floor in seconds: the maximum of all registered
@@ -228,7 +271,8 @@ public sealed class LiveUsageClient : IUsageClient
         {
             if (ct.IsCancellationRequested) return;
 
-            UsageSnapshot snap;
+            UsageSnapshot? snap = null;
+            var threw = false;
             try
             {
                 snap = await provider.SnapshotAsync(nowUnix, ct).ConfigureAwait(false);
@@ -240,15 +284,23 @@ public sealed class LiveUsageClient : IUsageClient
             catch (Exception)
             {
                 // Defensive: provider is expected to return an error snapshot, not throw.
-                // If it does throw, skip this provider but continue with the others.
-                continue;
+                // Record the failure (so it becomes observable) but keep polling others.
+                threw = true;
             }
 
-            // Best-effort cache write — swallow errors, no logging (credential-safe).
-            try { _cache.SaveLast(provider.ProviderId, snap); } catch { }
+            if (snap is not null)
+            {
+                // Best-effort cache write — swallow errors, no logging (credential-safe).
+                try { _cache.SaveLast(provider.ProviderId, snap); } catch { }
+                _latest[provider.ProviderId] = snap;
+                SnapshotReceived?.Invoke(snap);
+            }
 
-            _latest[provider.ProviderId] = snap;
-            SnapshotReceived?.Invoke(snap);
+            // ── Classify the cycle outcome and raise StatusChanged ──────────────────
+            // Success = a snapshot whose Health is a real determination (ok/degraded/needs-signin).
+            // Failure = the provider threw, or returned Health == "error".
+            var isSuccess = !threw && snap is not null && snap.Health != "error";
+            RecordOutcome(provider.ProviderId, isSuccess);
         }
     }
 }

@@ -1,9 +1,11 @@
+using System;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.Linq;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Fluentometer.Logic.Capture;
 using Fluentometer.Logic.Ipc;
 using Fluentometer.Logic.Ui;
 
@@ -39,6 +41,7 @@ public partial class UsageViewModel : ObservableObject
 {
     private readonly IUsageClient _client;
     private readonly IUiDispatcher _dispatcher;
+    private readonly StalenessWatcher _staleness = new();
 
     // -------------------------------------------------------------------------
     // Observable properties (unchanged surface — backward-compatible with tray,
@@ -65,6 +68,14 @@ public partial class UsageViewModel : ObservableObject
     /// pushes synthetic data through <see cref="ApplyDemoSnapshot"/>. Session-only.
     /// </summary>
     [ObservableProperty] private bool _isDemoMode;
+
+    /// <summary>True when one or more providers' data has gone stale/unreachable.
+    /// Drives the header status dot's red pulse. Suppressed in demo mode.</summary>
+    [ObservableProperty] private bool _isStale;
+
+    /// <summary>Human-readable explanation of the stale state for the dot's tooltip.
+    /// Empty when not stale.</summary>
+    [ObservableProperty] private string _statusDetail = "";
 
     // -------------------------------------------------------------------------
     // Groups — the primary multi-provider collection
@@ -104,6 +115,13 @@ public partial class UsageViewModel : ObservableObject
         _dispatcher = dispatcher;
         _client.SnapshotReceived += OnSnapshot;
         _client.ConnectionChanged += c => _dispatcher.Post(() => IsConnected = c);
+        _client.StatusChanged += s => _dispatcher.Post(() =>
+        {
+            _staleness.Update(s);
+            // Re-evaluate immediately on a new outcome (recovery is felt at once);
+            // the UI's 1s tick keeps age-based staleness fresh between outcomes.
+            EvaluateStaleness(DateTimeOffset.UtcNow);
+        });
     }
 
     // -------------------------------------------------------------------------
@@ -226,6 +244,30 @@ public partial class UsageViewModel : ObservableObject
         "ok" => 1,
         _ => 0,
     };
+
+    // -------------------------------------------------------------------------
+    // Staleness evaluation
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Recomputes <see cref="IsStale"/> / <see cref="StatusDetail"/> from the latest per-provider
+    /// outcomes at <paramref name="now"/>. Driven both by incoming <c>StatusChanged</c> events and
+    /// by the dashboard's 1-second tick (so age-based staleness advances even if the poll loop is
+    /// wedged and emits nothing). Demo mode forces the not-stale state.
+    /// </summary>
+    public void EvaluateStaleness(DateTimeOffset now)
+    {
+        if (IsDemoMode)
+        {
+            if (IsStale) IsStale = false;
+            if (StatusDetail.Length > 0) StatusDetail = "";
+            return;
+        }
+
+        var result = _staleness.Evaluate(now);
+        if (IsStale != result.IsStale) IsStale = result.IsStale;
+        if (StatusDetail != result.Detail) StatusDetail = result.Detail;
+    }
 
     // -------------------------------------------------------------------------
     // Commands

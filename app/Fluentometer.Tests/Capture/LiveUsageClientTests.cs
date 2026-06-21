@@ -296,6 +296,132 @@ public class LiveUsageClientTests
         cts.Cancel();
     }
 
+    // --- StatusChanged: throwing provider ---
+
+    private sealed class AlwaysThrowsProvider : IUsageProvider
+    {
+        public string ProviderId => "claude";
+        public TimeSpan MinPollInterval => TimeSpan.FromSeconds(180);
+        public Task<UsageSnapshot> SnapshotAsync(long nowUnix, CancellationToken ct)
+            => throw new InvalidOperationException("boom");
+    }
+
+    [Fact]
+    public async Task ThrowingProvider_RaisesStatus_WithIncrementingFailures()
+    {
+        var provider = new AlwaysThrowsProvider();
+        var cache = new FakeSnapshotCache();
+        var client = new LiveUsageClient(provider, cache);
+
+        var statuses = new List<RefreshStatus>();
+        client.StatusChanged += s => statuses.Add(s);
+
+        using var cts = new CancellationTokenSource();
+        var run = client.StartAsync(cts.Token);
+
+        await Task.Delay(200);
+        cts.Cancel();
+        try { await run; } catch (OperationCanceledException) { }
+
+        Assert.NotEmpty(statuses);
+        var first = statuses[0];
+        Assert.Equal("claude", first.ProviderId);
+        Assert.Null(first.LastSuccessUtc);
+        Assert.True(first.ConsecutiveFailures >= 1);
+        // IntervalSecs reflects the actual cadence (DefaultIntervalSecs=300, not the 180 floor).
+        Assert.Equal(LiveUsageClient.DefaultIntervalSecs, first.IntervalSecs);
+    }
+
+    // --- IntervalSecs reflects provider floor when floor exceeds DefaultIntervalSecs ---
+
+    private sealed class HighFloorProvider : IUsageProvider
+    {
+        public string ProviderId => "claude";
+        public TimeSpan MinPollInterval => TimeSpan.FromSeconds(600);
+
+        public Task<UsageSnapshot> SnapshotAsync(long nowUnix, CancellationToken ct)
+            => Task.FromResult(new UsageSnapshot(
+                "claude", nowUnix, "oauth", "ok", "Max", Array.Empty<Gauge>()));
+    }
+
+    [Fact]
+    public async Task IntervalSecs_ReflectsHighProviderFloor_WhenFloorExceedsDefault()
+    {
+        // Math.Max(DefaultIntervalSecs=300, providerFloor=600) = 600.
+        // _statusIntervalSecs must be 600, not the frozen 180 from the old bug.
+        var provider = new HighFloorProvider();
+        var cache = new FakeSnapshotCache();
+        var client = new LiveUsageClient(provider, cache);
+
+        var statuses = new List<RefreshStatus>();
+        client.StatusChanged += s => statuses.Add(s);
+
+        using var cts = new CancellationTokenSource();
+        var run = client.StartAsync(cts.Token);
+
+        await Task.Delay(200);
+        cts.Cancel();
+        try { await run; } catch (OperationCanceledException) { }
+
+        Assert.NotEmpty(statuses);
+        Assert.Equal(600L, statuses[0].IntervalSecs);
+    }
+
+    [Fact]
+    public async Task SuccessfulProvider_RaisesStatus_WithResetFailuresAndLastSuccess()
+    {
+        var provider = new FakeUsageProvider(MakeSnap("ok"));
+        var cache = new FakeSnapshotCache();
+        var client = new LiveUsageClient(provider, cache);
+
+        var statuses = new List<RefreshStatus>();
+        client.StatusChanged += s => statuses.Add(s);
+
+        using var cts = new CancellationTokenSource();
+        var run = client.StartAsync(cts.Token);
+        await Task.Delay(200);
+        cts.Cancel();
+        try { await run; } catch (OperationCanceledException) { }
+
+        Assert.NotEmpty(statuses);
+        var last = statuses[^1];
+        Assert.Equal(0, last.ConsecutiveFailures);
+        Assert.NotNull(last.LastSuccessUtc);
+    }
+
+    [Theory]
+    [InlineData("error", false)]
+    [InlineData("ok", true)]
+    [InlineData("degraded", true)]
+    [InlineData("needs-signin", true)]
+    public async Task SnapshotHealth_ClassifiedAsSuccessOrFailure(string health, bool isSuccess)
+    {
+        var provider = new FakeUsageProvider(MakeSnap(health));
+        var cache = new FakeSnapshotCache();
+        var client = new LiveUsageClient(provider, cache);
+
+        var statuses = new List<RefreshStatus>();
+        client.StatusChanged += s => statuses.Add(s);
+
+        using var cts = new CancellationTokenSource();
+        var run = client.StartAsync(cts.Token);
+        await Task.Delay(200);
+        cts.Cancel();
+        try { await run; } catch (OperationCanceledException) { }
+
+        var last = statuses[^1];
+        if (isSuccess)
+        {
+            Assert.Equal(0, last.ConsecutiveFailures);
+            Assert.NotNull(last.LastSuccessUtc);
+        }
+        else
+        {
+            Assert.True(last.ConsecutiveFailures >= 1);
+            Assert.Null(last.LastSuccessUtc);
+        }
+    }
+
     // --- SnapshotReceived fires from background thread, not deadlock ---
 
     [Fact]

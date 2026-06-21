@@ -28,7 +28,8 @@ For each provider it shows a card group:
 - A **5-hour** (rolling session) gauge and a **weekly** gauge, plus **per-model weekly** gauges for
   Claude where the plan reports them.
 - A big **percent used**, the **limit label**, and a live **reset countdown** ("resets in 4h 12m").
-- Your **plan** (e.g. "Claude Pro", "ChatGPT Plus") and a **connection indicator**.
+- Your **plan** (e.g. "Claude Pro", "ChatGPT Plus") and a **status indicator** that pulses red if
+  data stops refreshing.
 
 ## Providers & how it works
 
@@ -59,6 +60,11 @@ The dashboard adapts to each provider's health:
   instead of showing zeros.
 - **Degraded** — when authoritative data is briefly unavailable, Claude shows a labelled local
   estimate; ChatGPT and Gemini show a degraded card (they have no local fallback).
+- **Stale / unreachable** — if refreshes start failing or no fresh update has landed in a while
+  (relative to your poll interval), the status indicator **slowly pulses red** and a hover tooltip
+  explains which provider is stuck and how long it's been — so a silently frozen gauge can't masquerade
+  as live data. The last-known values stay on screen, and the indicator returns to steady green as
+  soon as a good update arrives.
 - **Refresh** — a manual refresh button requests a fresh snapshot on demand.
 
 ## Settings

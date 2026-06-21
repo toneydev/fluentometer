@@ -54,6 +54,8 @@ public sealed partial class DashboardPage : Page
         new(Color.FromArgb(0xFF, 0x6F, 0xCF, 0x6F));
     private static readonly SolidColorBrush s_dotDisconnected =
         new(Color.FromArgb(0xFF, 0x88, 0x88, 0x88));
+    private static readonly SolidColorBrush s_dotStale =
+        new(Color.FromArgb(0xFF, 0xC4, 0x2B, 0x1A)); // WCAG red — matches s_pillError
 
     // -------------------------------------------------------------------------
     // State
@@ -689,6 +691,7 @@ public sealed partial class DashboardPage : Page
 
     private void RefreshCountdowns()
     {
+        _vm?.EvaluateStaleness(DateTimeOffset.UtcNow);
         if (_vm is null) return;
         for (var gi = 0; gi < _vm.Groups.Count; gi++)
         {
@@ -714,7 +717,9 @@ public sealed partial class DashboardPage : Page
     {
         if (e.PropertyName is nameof(UsageViewModel.IsConnected)
                            or nameof(UsageViewModel.Health)
-                           or nameof(UsageViewModel.IsDemoMode))
+                           or nameof(UsageViewModel.IsDemoMode)
+                           or nameof(UsageViewModel.IsStale)
+                           or nameof(UsageViewModel.StatusDetail))
         {
             UpdateHeader();
         }
@@ -729,7 +734,23 @@ public sealed partial class DashboardPage : Page
     {
         if (_vm is null) return;
 
-        ConnectionDot.Fill = _vm.IsConnected ? s_dotConnected : s_dotDisconnected;
+        // Precedence: stale (red pulse) > connected (green) > disconnected (grey).
+        if (_vm.IsStale)
+        {
+            ConnectionDot.Fill = s_dotStale;
+            if (StalePulse.GetCurrentState() == Microsoft.UI.Xaml.Media.Animation.ClockState.Stopped)
+                StalePulse.Begin();
+        }
+        else
+        {
+            StalePulse.Stop();
+            ConnectionDot.Opacity = 1.0; // reset opacity the pulse may have left mid-fade
+            ConnectionDot.Fill = _vm.IsConnected ? s_dotConnected : s_dotDisconnected;
+        }
+
+        // Tooltip explains the state on hover; neutral label when healthy.
+        ToolTipService.SetToolTip(ConnectionDot,
+            _vm.IsStale ? _vm.StatusDetail : "Connection status");
 
         // Banners driven by the worst-of Health rollup (same as original single-provider).
         DegradedBanner.IsOpen = _vm.Health == "degraded";
